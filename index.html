@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>ShiftLedger — Store Attendance &amp; Task Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1B1F2A;
+  --ink-2:#262C3B;
+  --canvas:#E9EBEF;
+  --panel:#FFFFFF;
+  --line:#D7DBE3;
+  --steel:#3E5C76;
+  --steel-dark:#2C4356;
+  --amber:#E2A93B;
+  --amber-dark:#C68A22;
+  --success:#3F7A5D;
+  --success-bg:#E4F1EA;
+  --alert:#B5484D;
+  --alert-bg:#FBE9E9;
+  --text:#1B1F2A;
+  --text-soft:#5B6472;
+  --text-faint:#8992A1;
+  --radius:10px;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:'Inter',sans-serif;
+  background:var(--canvas);
+  color:var(--text);
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,.display{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:0.03em;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+button{font-family:'Inter',sans-serif;cursor:pointer;}
+a{color:inherit;}
+::selection{background:var(--amber);color:var(--ink);}
+
+/* ---------- Login ---------- */
+.login-wrap{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:
+    linear-gradient(180deg, rgba(27,31,42,0.0) 0%, rgba(27,31,42,0.0) 100%),
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.03) 0 2px, transparent 2px 26px),
+    var(--ink);
+  padding:24px;
+}
+.login-card{
+  background:var(--panel);
+  width:100%;max-width:380px;
+  border-radius:14px;
+  padding:36px 32px 30px;
+  box-shadow:0 30px 60px rgba(0,0,0,0.35);
+  border-top:5px solid var(--amber);
+}
+.brand-mark{display:flex;align-items:center;gap:10px;margin-bottom:22px;}
+.brand-clock{
+  width:34px;height:34px;border-radius:50%;border:3px solid var(--ink);
+  position:relative;flex:none;
+}
+.brand-clock:before,.brand-clock:after{content:'';position:absolute;background:var(--ink);border-radius:2px;}
+.brand-clock:before{width:2px;height:10px;top:5px;left:15px;transform-origin:bottom center;}
+.brand-clock:after{width:2px;height:7px;top:8px;left:16px;transform-origin:bottom center;transform:rotate(70deg);}
+.brand-name{font-family:'Oswald',sans-serif;font-size:20px;font-weight:600;letter-spacing:0.04em;}
+.brand-sub{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.12em;margin-top:-4px;}
+.login-card h1{font-size:22px;margin:0 0 6px;}
+.login-card p.lead{color:var(--text-soft);font-size:13.5px;margin:0 0 24px;line-height:1.5;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-soft);margin-bottom:6px;font-weight:600;}
+.field input,.field select,.field textarea{
+  width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:8px;
+  font-size:14.5px;font-family:'Inter',sans-serif;background:#FBFBFC;color:var(--text);
+}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--steel);background:#fff;}
+.btn{
+  border:none;border-radius:8px;padding:12px 18px;font-size:14px;font-weight:600;
+  letter-spacing:0.02em;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  transition:transform .08s ease, box-shadow .15s ease;
+}
+.btn:active{transform:translateY(1px);}
+.btn-primary{background:var(--ink);color:#fff;}
+.btn-primary:hover{background:var(--ink-2);}
+.btn-amber{background:var(--amber);color:var(--ink);}
+.btn-amber:hover{background:var(--amber-dark);}
+.btn-ghost{background:transparent;color:var(--text-soft);border:1.5px solid var(--line);}
+.btn-ghost:hover{border-color:var(--steel);color:var(--steel);}
+.btn-block{width:100%;}
+.btn-sm{padding:7px 12px;font-size:12.5px;border-radius:6px;}
+.btn-danger{background:var(--alert-bg);color:var(--alert);}
+.btn-danger:hover{background:#f6d3d4;}
+.error-box{background:var(--alert-bg);color:var(--alert);font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px;}
+.demo-accounts{margin-top:22px;border-top:1px dashed var(--line);padding-top:16px;}
+.demo-accounts summary{font-size:12px;color:var(--text-soft);cursor:pointer;font-weight:600;letter-spacing:0.02em;}
+.demo-list{margin-top:10px;font-size:12px;color:var(--text-soft);line-height:1.9;}
+.demo-list b{color:var(--text);}
+.demo-row{display:flex;justify-content:space-between;gap:8px;cursor:pointer;padding:4px 6px;border-radius:5px;}
+.demo-row:hover{background:var(--canvas);}
+
+/* ---------- App shell ---------- */
+.app{display:flex;min-height:100vh;}
+.sidebar{
+  width:220px;flex:none;background:var(--ink);color:#fff;
+  display:flex;flex-direction:column;padding:20px 0;
+}
+.sidebar .brand-mark{padding:0 20px;margin-bottom:26px;}
+.sidebar .brand-mark .brand-clock{border-color:#fff;}
+.sidebar .brand-mark .brand-clock:before,.sidebar .brand-mark .brand-clock:after{background:#fff;}
+.sidebar .brand-name{color:#fff;}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:11px 20px;font-size:13.5px;font-weight:500;
+  color:rgba(255,255,255,0.62);border-left:3px solid transparent;cursor:pointer;
+}
+.nav-item:hover{color:#fff;background:rgba(255,255,255,0.04);}
+.nav-item.active{color:#fff;border-left-color:var(--amber);background:rgba(255,255,255,0.06);}
+.nav-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0.7;flex:none;}
+.sidebar-foot{margin-top:auto;padding:16px 20px 4px;border-top:1px solid rgba(255,255,255,0.1);}
+.who{font-size:13px;font-weight:600;}
+.who-role{font-size:11px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;}
+.logout-link{font-size:12px;color:var(--amber);margin-top:10px;display:inline-block;cursor:pointer;}
+
+.main{flex:1;min-width:0;}
+.topbar{
+  background:var(--panel);border-bottom:1px solid var(--line);padding:16px 28px;
+  display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5;
+}
+.topbar h1{font-size:19px;margin:0;}
+.topbar .ctx{font-size:12.5px;color:var(--text-soft);margin-top:2px;}
+.clock-live{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--text-soft);}
+.content{padding:26px 28px 60px;max-width:1180px;}
+
+/* ---------- Cards / grid ---------- */
+.grid{display:grid;gap:16px;}
+.grid-4{grid-template-columns:repeat(4,1fr);}
+.grid-3{grid-template-columns:repeat(3,1fr);}
+.grid-2{grid-template-columns:repeat(2,1fr);}
+@media(max-width:980px){.grid-4{grid-template-columns:repeat(2,1fr);}.grid-3{grid-template-columns:repeat(2,1fr);}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;}
+.stat-card .stat-label{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-soft);font-weight:600;}
+.stat-card .stat-value{font-family:'Oswald',sans-serif;font-size:32px;margin-top:6px;}
+.stat-card .stat-note{font-size:12px;color:var(--text-faint);margin-top:4px;}
+.section-title{font-size:15px;margin:30px 0 12px;display:flex;align-items:center;justify-content:space-between;}
+.section-title .hint{font-size:11.5px;text-transform:none;letter-spacing:0;color:var(--text-faint);font-family:'Inter',sans-serif;font-weight:400;}
+
+/* ---------- Table ---------- */
+table{width:100%;border-collapse:collapse;background:var(--panel);}
+th,td{text-align:left;padding:10px 14px;font-size:13.5px;border-bottom:1px solid var(--line);}
+th{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-soft);font-weight:600;background:#F5F6F8;}
+tr:last-child td{border-bottom:none;}
+.table-wrap{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+
+.pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:0.02em;}
+.pill-present{background:var(--success-bg);color:var(--success);}
+.pill-late{background:#FCEFDA;color:var(--amber-dark);}
+.pill-absent{background:var(--alert-bg);color:var(--alert);}
+.pill-leave{background:#E7ECF7;color:var(--steel);}
+.pill-pending{background:#FCEFDA;color:var(--amber-dark);}
+.pill-approved{background:var(--success-bg);color:var(--success);}
+.pill-rejected{background:var(--alert-bg);color:var(--alert);}
+
+/* ---------- Punch card ---------- */
+.punch-wrap{display:flex;gap:22px;flex-wrap:wrap;align-items:stretch;}
+.punch-card{
+  background:var(--ink);color:#fff;border-radius:14px;padding:26px;flex:1;min-width:260px;
+  display:flex;flex-direction:column;align-items:center;text-align:center;position:relative;overflow:hidden;
+}
+.punch-card:after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(135deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 24px);pointer-events:none;}
+.punch-time{font-family:'IBM Plex Mono',monospace;font-size:38px;letter-spacing:0.02em;}
+.punch-date{font-size:12px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px;}
+.punch-store{font-size:12.5px;color:rgba(255,255,255,0.7);margin-top:14px;}
+.punch-btn{
+  margin-top:20px;width:120px;height:120px;border-radius:50%;border:3px solid var(--amber);
+  background:transparent;color:var(--amber);font-family:'Oswald',sans-serif;font-size:15px;font-weight:600;
+  letter-spacing:0.04em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;
+  transition:all .15s ease;
+}
+.punch-btn:hover{background:var(--amber);color:var(--ink);}
+.punch-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.punch-btn.out{border-color:var(--alert);color:#f0a5a8;}
+.punch-btn.out:hover{background:var(--alert);color:#fff;}
+.punch-status{margin-top:16px;font-size:12.5px;min-height:18px;color:rgba(255,255,255,0.75);}
+.ticket{
+  flex:1;min-width:260px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;
+}
+.ticket h3{font-size:13px;margin:0 0 12px;color:var(--text-soft);}
+.ticket-row{display:flex;justify-content:space-between;font-size:13.5px;padding:8px 0;border-bottom:1px dashed var(--line);}
+.ticket-row:last-child{border-bottom:none;}
+.ticket-row .lbl{color:var(--text-soft);}
+.ticket-row .val{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+
+/* ---------- Task list ---------- */
+.task-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);}
+.task-row:last-child{border-bottom:none;}
+.task-check{width:20px;height:20px;border-radius:5px;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#fff;}
+.task-check.done{background:var(--success);border-color:var(--success);color:#fff;}
+.task-title{flex:1;font-size:14px;}
+.task-title.done{text-decoration:line-through;color:var(--text-faint);}
+.task-meta{font-size:11.5px;color:var(--text-faint);}
+
+/* ---------- Forms / modal ---------- */
+.modal-bg{position:fixed;inset:0;background:rgba(27,31,42,0.5);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
+.modal{background:var(--panel);border-radius:14px;padding:26px 26px 22px;width:100%;max-width:440px;max-height:88vh;overflow:auto;}
+.modal h3{margin:0 0 4px;font-size:17px;}
+.modal .close{position:absolute;}
+.modal-actions{display:flex;gap:10px;margin-top:18px;}
+.inline-form{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
+.inline-form input,.inline-form select{flex:1;min-width:140px;}
+.empty-note{color:var(--text-faint);font-size:13px;padding:22px 4px;text-align:center;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;}
+.subtle-link{font-size:12.5px;color:var(--steel);cursor:pointer;font-weight:600;}
+.badge-role{font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-faint);font-weight:600;}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--ink);color:#fff;padding:13px 18px;border-radius:9px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,0.3);z-index:80;max-width:320px;}
+.month-switch{display:flex;align-items:center;gap:10px;font-size:13px;}
+.month-switch button{background:none;border:1px solid var(--line);border-radius:6px;width:28px;height:28px;color:var(--text-soft);}
+@media(max-width:760px){
+  .sidebar{position:fixed;left:-220px;top:0;bottom:0;transition:left .2s;z-index:40;}
+  .sidebar.open{left:0;}
+  .content{padding:18px 14px 50px;}
+  .topbar{padding:14px 16px;}
+  .grid-4,.grid-3,.grid-2{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+/* ============================= STATE ============================= */
+const STATE = {
+  user:null, page:'dashboard', stores:[], users:[], attendance:[], taskTemplates:[],
+  taskInstances:[], leaves:[], ready:false, punchStatus:'', punchOk:null, month:new Date(), navOpen:false,
+  toast:null
+};
+const SHIFT_START_MIN = 9*60+30; // 9:30am
+const GRACE_MIN = 15;
+const RADIUS_M = 100;
+
+/* ============================= HELPERS ============================= */
+function uid(){return Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function localDateStr(d){const off=d.getTimezoneOffset();const l=new Date(d.getTime()-off*60000);return l.toISOString().slice(0,10);}
+function todayStr(){return localDateStr(new Date());}
+function fmtTime(iso){if(!iso)return '—';return new Date(iso).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});}
+function fmtDate(str){const d=new Date(str+'T00:00:00');return d.toLocaleDateString([], {day:'2-digit',month:'short',year:'numeric'});}
+function fmtDateShort(str){const d=new Date(str+'T00:00:00');return d.toLocaleDateString([], {day:'2-digit',month:'short'});}
+function distanceMeters(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function isLateAt(d){const mins=d.getHours()*60+d.getMinutes();return mins>SHIFT_START_MIN+GRACE_MIN;}
+function isSunday(dateStr){return new Date(dateStr+'T00:00:00').getDay()===0;}
+function showToast(msg){STATE.toast=msg;render();setTimeout(()=>{STATE.toast=null;render();},2800);}
+
+/* ---------- storage ---------- */
+/* async function saveKey(key,value,shared){
+  try{ await window.storage.set(key, JSON.stringify(value), shared); return true; }
+  catch(e){ console.error('save failed',key,e); showToast('Could not save — storage error.'); return false; }
+}
+async function loadKey(key,shared){
+  try{ const r=await window.storage.get(key,shared); return r? JSON.parse(r.value): null; }
+  catch(e){ return null; }
+} */
+
+// Change this URL to your deployed Render service URL later
+const BACKEND_API_URL = "https://jockey-tracker.onrender.com"; 
+
+async function saveKey(key, value, shared) {
+  try {
+    // Session is user-specific, other keys are global app state
+    const storageKey = shared ? key : `${key}_local`;
+    
+    const response = await fetch(`${BACKEND_API_URL}/api/storage/${storageKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value })
+    });
+    
+    if (!response.ok) throw new Error('Network error');
+    return true;
+  } catch (e) {
+    console.error('Save failed', key, e);
+    showToast('Could not save — database error.');
+    return false;
+  }
+}
+
+async function loadKey(key, shared) {
+  try {
+    const storageKey = shared ? key : `${key}_local`;
+    const response = await fetch(`${BACKEND_API_URL}/api/storage/${storageKey}`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (e) {
+    console.error('Load failed', key, e);
+    return null;
+  }
+}
+
+const persistStores=()=>saveKey('stores',STATE.stores,true);
+const persistUsers=()=>saveKey('users',STATE.users,true);
+const persistTemplates=()=>saveKey('task_templates',STATE.taskTemplates,true);
+const persistInstances=()=>saveKey('task_instances',STATE.taskInstances,true);
+const persistAttendance=()=>saveKey('attendance',STATE.attendance,true);
+const persistLeaves=()=>saveKey('leaves',STATE.leaves,true);
+
+/* ============================= SEED DATA ============================= */
+function seedData(){
+  const stores=[
+    {id:'st_a', name:'Koregaon Park', address:'North Main Road, Koregaon Park, Pune', lat:18.5159, lng:73.9472},
+    {id:'st_b', name:'Baner', address:'Baner Road, Pune', lat:18.5590, lng:73.7868},
+    {id:'st_c', name:'Kothrud', address:'Karve Road, Kothrud, Pune', lat:18.5074, lng:73.8077},
+    {id:'st_d', name:'Viman Nagar', address:'Viman Nagar Main Road, Pune', lat:18.5679, lng:73.9143},
+  ];
+  const users=[
+    {id:'u_admin', name:'Ananya Kulkarni', email:'admin@storeflow.demo', password:'admin123', role:'admin', storeId:null, storeIds:null, active:true},
+    {id:'u_area1', name:'Rohan Mehta', email:'rohan.area@storeflow.demo', password:'area123', role:'area_manager', storeId:null, storeIds:['st_a','st_d'], active:true},
+    {id:'u_area2', name:'Priya Nair', email:'priya.area@storeflow.demo', password:'area123', role:'area_manager', storeId:null, storeIds:['st_b','st_c'], active:true},
+    {id:'u_mgr_a', name:'Vikram Shah', email:'vikram.manager@storeflow.demo', password:'manager123', role:'store_manager', storeId:'st_a', storeIds:null, active:true},
+    {id:'u_mgr_b', name:'Sneha Joshi', email:'sneha.manager@storeflow.demo', password:'manager123', role:'store_manager', storeId:'st_b', storeIds:null, active:true},
+    {id:'u_mgr_c', name:'Arjun Desai', email:'arjun.manager@storeflow.demo', password:'manager123', role:'store_manager', storeId:'st_c', storeIds:null, active:true},
+    {id:'u_mgr_d', name:'Meera Iyer', email:'meera.manager@storeflow.demo', password:'manager123', role:'store_manager', storeId:'st_d', storeIds:null, active:true},
+  ];
+  const staffNames=[
+    ['Aditi Rao','st_a'],['Karan Bhosale','st_a'],['Neha Pawar','st_a'],['Siddharth Kale','st_a'],['Ishita Deshmukh','st_a'],
+    ['Yash Kulkarni','st_b'],['Pooja Shinde','st_b'],['Rahul Gaikwad','st_b'],['Simran Kaur','st_b'],
+    ['Aman Jadhav','st_c'],['Divya Patil','st_c'],['Manoj Chavan','st_c'],['Ritika Sawant','st_c'],
+    ['Farhan Sheikh','st_d'],['Gauri Kadam','st_d'],['Om Bhagat','st_d'],['Tanvi More','st_d'],['Rohit Salunkhe','st_d'],
+  ];
+  staffNames.forEach((s,i)=>{
+    users.push({id:'u_staff'+i, name:s[0], email:'staff'+(i+1)+'@storeflow.demo', password:'staff123', role:'sales_staff', storeId:s[1], storeIds:null, active:true});
+  });
+  const taskTitles=['Open store & switch on lights','Clean & organize shelves','Check & log stock levels','Update daily sales register','Close store & lock up'];
+  const taskTemplates=[];
+  stores.forEach(st=>{ taskTitles.forEach((t,i)=>{ taskTemplates.push({id:'tt_'+st.id+'_'+i, storeId:st.id, title:t, active:true}); }); });
+  return {stores, users, taskTemplates};
+}
+
+/* ============================= INIT ============================= */
+async function init(){
+  let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
+    loadKey('stores',true), loadKey('users',true), loadKey('task_templates',true),
+    loadKey('attendance',true), loadKey('task_instances',true), loadKey('leaves',true)
+  ]);
+  if(!stores || !users){
+    const seed=seedData();
+    stores=seed.stores; users=seed.users; taskTemplates=seed.taskTemplates;
+    attendance=[]; taskInstances=[]; leaves=[];
+    await Promise.all([persistWith('stores',stores),persistWith('users',users),persistWith('task_templates',taskTemplates),
+      persistWith('attendance',attendance),persistWith('task_instances',taskInstances),persistWith('leaves',leaves)]);
+  }
+  STATE.stores=stores||[]; STATE.users=users||[]; STATE.taskTemplates=taskTemplates||[];
+  STATE.attendance=attendance||[]; STATE.taskInstances=taskInstances||[]; STATE.leaves=leaves||[];
+  const sessionId = await loadKey('session',false);
+  if(sessionId){ const u=STATE.users.find(x=>x.id===sessionId); if(u) STATE.user=u; }
+  STATE.ready=true;
+  render();
+}
+function persistWith(key,val){return saveKey(key,val,true);}
+
+/* ============================= SCOPE HELPERS ============================= */
+function storesForUser(u){
+  if(!u) return [];
+  if(u.role==='admin') return STATE.stores;
+  if(u.role==='area_manager') return STATE.stores.filter(s=>(u.storeIds||[]).includes(s.id));
+  if(u.role==='store_manager'||u.role==='sales_staff') return STATE.stores.filter(s=>s.id===u.storeId);
+  return [];
+}
+function storeIdsForUser(u){return storesForUser(u).map(s=>s.id);}
+function employeesForUser(u){
+  const ids=storeIdsForUser(u);
+  if(u.role==='admin') return STATE.users.filter(x=>x.role!=='admin');
+  if(u.role==='area_manager') return STATE.users.filter(x=>ids.includes(x.storeId));
+  if(u.role==='store_manager') return STATE.users.filter(x=>x.storeId===u.storeId && x.role==='sales_staff');
+  return [];
+}
+function storeName(id){const s=STATE.stores.find(x=>x.id===id); return s? s.name:'—';}
+function userName(id){const u=STATE.users.find(x=>x.id===id); return u? u.name:'Unknown';}
+function roleLabel(r){return {admin:'Admin / Owner',area_manager:'Area Manager',store_manager:'Store Manager',sales_staff:'Sales Staff'}[r]||r;}
+
+/* ============================= TASKS ============================= */
+function ensureInstancesForDate(storeIds, date){
+  let changed=false;
+  storeIds.forEach(sid=>{
+    STATE.taskTemplates.filter(t=>t.storeId===sid && t.active).forEach(t=>{
+      if(!STATE.taskInstances.find(i=>i.templateId===t.id && i.date===date)){
+        STATE.taskInstances.push({id:uid(), templateId:t.id, storeId:sid, date, title:t.title, completed:false, completedBy:null, completedAt:null});
+        changed=true;
+      }
+    });
+  });
+  if(changed) persistInstances();
+  return changed;
+}
+async function toggleTask(instId){
+  const inst=STATE.taskInstances.find(i=>i.id===instId); if(!inst) return;
+  inst.completed=!inst.completed;
+  inst.completedBy=inst.completed? STATE.user.id:null;
+  inst.completedAt=inst.completed? new Date().toISOString():null;
+  await persistInstances(); render();
+}
+async function addTaskTemplate(storeId, title){
+  if(!title.trim()) return;
+  STATE.taskTemplates.push({id:uid(), storeId, title:title.trim(), active:true});
+  await persistTemplates();
+  ensureInstancesForDate([storeId], todayStr());
+  render();
+}
+async function removeTaskTemplate(id){
+  const t=STATE.taskTemplates.find(x=>x.id===id); if(!t) return;
+  t.active=false; await persistTemplates(); render();
+}
+
+/* ============================= ATTENDANCE ============================= */
+function todayRecordFor(userId){return STATE.attendance.find(a=>a.userId===userId && a.date===todayStr());}
+function geoOnce(){
+  return new Promise((resolve,reject)=>{
+    if(!navigator.geolocation){reject(new Error('Geolocation not supported on this device/browser.'));return;}
+    navigator.geolocation.getCurrentPosition(pos=>resolve(pos), err=>reject(err), {enableHighAccuracy:true, timeout:12000, maximumAge:0});
+  });
+}
+async function punchIn(){
+  const u=STATE.user, store=STATE.stores.find(s=>s.id===u.storeId);
+  if(!store){ STATE.punchStatus='No store assigned to your account.'; STATE.punchOk=false; render(); return; }
+  STATE.punchStatus='Getting your location…'; STATE.punchOk=null; render();
+  try{
+    const pos=await geoOnce();
+    const {latitude,longitude,accuracy}=pos.coords;
+    const dist=distanceMeters(latitude,longitude,store.lat,store.lng);
+    if(dist>RADIUS_M){
+      STATE.punchStatus=`You're ${Math.round(dist)}m from ${store.name}. Get within ${RADIUS_M}m to punch in.`;
+      STATE.punchOk=false; render(); return;
+    }
+    const now=new Date();
+    STATE.attendance.push({id:uid(), userId:u.id, storeId:store.id, date:localDateStr(now),
+      checkInTime:now.toISOString(), checkInLoc:{lat:latitude,lng:longitude,accuracy:Math.round(accuracy)},
+      checkOutTime:null, checkOutLoc:null, late:isLateAt(now)});
+    await persistAttendance();
+    STATE.punchStatus=`Punched in ${Math.round(dist)}m from ${store.name}.`; STATE.punchOk=true;
+    render();
+  }catch(err){
+    STATE.punchStatus='Location error: '+(err.message||'permission denied.'); STATE.punchOk=false; render();
+  }
+}
+async function punchOut(){
+  const u=STATE.user, store=STATE.stores.find(s=>s.id===u.storeId);
+  const rec=todayRecordFor(u.id);
+  if(!rec || rec.checkOutTime){ return; }
+  STATE.punchStatus='Getting your location…'; STATE.punchOk=null; render();
+  try{
+    const pos=await geoOnce();
+    const {latitude,longitude,accuracy}=pos.coords;
+    const dist=distanceMeters(latitude,longitude,store.lat,store.lng);
+    if(dist>RADIUS_M){
+      STATE.punchStatus=`You're ${Math.round(dist)}m from ${store.name}. Get within ${RADIUS_M}m to punch out.`;
+      STATE.punchOk=false; render(); return;
+    }
+    const now=new Date();
+    rec.checkOutTime=now.toISOString(); rec.checkOutLoc={lat:latitude,lng:longitude,accuracy:Math.round(accuracy)};
+    await persistAttendance();
+    STATE.punchStatus=`Punched out ${Math.round(dist)}m from ${store.name}.`; STATE.punchOk=true;
+    render();
+  }catch(err){
+    STATE.punchStatus='Location error: '+(err.message||'permission denied.'); STATE.punchOk=false; render();
+  }
+}
+
+/* ---------- monthly report ---------- */
+function monthlyReport(userId, monthDate){
+  const y=monthDate.getFullYear(), m=monthDate.getMonth();
+  const today=new Date(); const isCurrentMonth=(today.getFullYear()===y && today.getMonth()===m);
+  const lastDay=isCurrentMonth? today.getDate() : new Date(y,m+1,0).getDate();
+  let present=0, late=0, absent=0, leave=0;
+  const rows=[];
+  for(let d=1; d<=lastDay; d++){
+    const dt=new Date(y,m,d); const ds=localDateStr(dt);
+    if(isSunday(ds)) continue;
+    const rec=STATE.attendance.find(a=>a.userId===userId && a.date===ds);
+    const onLeave=STATE.leaves.find(l=>l.userId===userId && l.status==='approved' && ds>=l.fromDate && ds<=l.toDate);
+    let status;
+    if(onLeave){status='leave'; leave++;}
+    else if(rec){ status=rec.late? 'late':'present'; rec.late? late++: present++; }
+    else { status='absent'; absent++; }
+    rows.push({date:ds, status, rec});
+  }
+  return {present, late, absent, leave, rows};
+}
+
+/* ============================= LEAVE ============================= */
+async function submitLeave(fromDate,toDate,reason){
+  if(!fromDate||!toDate||fromDate>toDate) return showToast('Check your leave dates.');
+  STATE.leaves.push({id:uid(), userId:STATE.user.id, storeId:STATE.user.storeId, fromDate, toDate, reason:reason.trim(),
+    status:'pending', requestedAt:new Date().toISOString(), decidedBy:null, decidedAt:null});
+  await persistLeaves(); showToast('Leave request submitted.'); render();
+}
+async function decideLeave(id, status){
+  const l=STATE.leaves.find(x=>x.id===id); if(!l) return;
+  l.status=status; l.decidedBy=STATE.user.id; l.decidedAt=new Date().toISOString();
+  await persistLeaves(); render();
+}
+
+/* ============================= AUTH ============================= */
+async function login(email,password){
+  const u=STATE.users.find(x=>x.email.toLowerCase()===email.trim().toLowerCase() && x.password===password && x.active!==false);
+  if(!u){ return false; }
+  STATE.user=u; STATE.page='dashboard';
+  await saveKey('session', u.id, false);
+  return true;
+}
+async function logout(){
+  STATE.user=null;
+  await saveKey('session', null, false);
+  render();
+}
+
+/* ============================= RENDER ROOT ============================= */
+function render(){
+  const root=document.getElementById('root');
+  if(!STATE.ready){ root.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8992A1;font-family:Inter,sans-serif;">Loading ShiftLedger…</div>'; return; }
+  if(!STATE.user){ root.innerHTML=renderLogin(); attachLoginEvents(); return; }
+  root.innerHTML=renderApp();
+  attachAppEvents();
+}
+
+/* ============================= LOGIN VIEW ============================= */
+function renderLogin(){
+  const demo=[
+    ['Admin / Owner','admin@storeflow.demo','admin123'],
+    ['Area Manager','rohan.area@storeflow.demo','area123'],
+    ['Store Manager','vikram.manager@storeflow.demo','manager123'],
+    ['Sales Staff','staff1@storeflow.demo','staff123'],
+  ];
+  return `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="brand-mark"><div class="brand-clock"></div><div><div class="brand-name">SHIFTLEDGER</div><div class="brand-sub">Store Ops Punch Clock</div></div></div>
+      <h1>Sign in</h1>
+      <p class="lead">Track attendance, tasks and leave across all your stores.</p>
+      <div id="loginError"></div>
+      <form id="loginForm">
+        <div class="field"><label>Email</label><input type="email" id="loginEmail" required placeholder="you@storeflow.demo"></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPassword" required placeholder="••••••••"></div>
+        <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+      </form>
+      <details class="demo-accounts">
+        <summary>Demo accounts (tap to autofill)</summary>
+        <div class="demo-list">
+          ${demo.map(d=>`<div class="demo-row" data-email="${esc(d[1])}" data-pass="${esc(d[2])}"><span><b>${esc(d[0])}</b></span><span class="mono">${esc(d[1])}</span></div>`).join('')}
+        </div>
+      </details>
+    </div>
+  </div>`;
+}
+function attachLoginEvents(){
+  document.getElementById('loginForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const email=document.getElementById('loginEmail').value, pass=document.getElementById('loginPassword').value;
+    const ok=await login(email,pass);
+    if(!ok){ document.getElementById('loginError').innerHTML='<div class="error-box">Email or password not recognized.</div>'; }
+    else render();
+  });
+  document.querySelectorAll('.demo-row').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      document.getElementById('loginEmail').value=row.dataset.email;
+      document.getElementById('loginPassword').value=row.dataset.pass;
+    });
+  });
+}
+
+/* ============================= APP SHELL ============================= */
+function navItemsFor(role){
+  const base=[['dashboard','Dashboard'],['attendance','Attendance'],['tasks','Tasks'],['leave','Leave']];
+  if(role!=='sales_staff') base.push(['reports','Reports']);
+  if(role==='admin'){ base.push(['team','Team']); base.push(['stores','Stores']); }
+  return base;
+}
+function renderApp(){
+  const u=STATE.user;
+  const nav=navItemsFor(u.role).map(([id,label])=>
+    `<div class="nav-item ${STATE.page===id?'active':''}" data-page="${id}"><span class="nav-dot"></span>${label}</div>`
+  ).join('');
+  return `
+  <div class="app">
+    <div class="sidebar ${STATE.navOpen?'open':''}" id="sidebar">
+      <div class="brand-mark"><div class="brand-clock"></div><div><div class="brand-name">SHIFTLEDGER</div><div class="brand-sub">Store Ops</div></div></div>
+      ${nav}
+      <div class="sidebar-foot">
+        <div class="who">${esc(u.name)}</div>
+        <div class="who-role">${esc(roleLabel(u.role))}</div>
+        <div class="logout-link" id="logoutBtn">Sign out</div>
+      </div>
+    </div>
+    <div class="main">
+      <div class="topbar">
+        <div><h1>${pageTitle(STATE.page)}</h1><div class="ctx">${pageSubtitle(u)}</div></div>
+        <div class="clock-live" id="liveClock"></div>
+      </div>
+      <div class="content">${renderPage()}</div>
+    </div>
+  </div>
+  ${STATE.toast? `<div class="toast">${esc(STATE.toast)}</div>`:''}
+  `;
+}
+function pageTitle(p){return {dashboard:'Dashboard',attendance:'Attendance',tasks:'Daily Tasks',leave:'Leave',reports:'Reports',team:'Team',stores:'Stores'}[p]||'';}
+function pageSubtitle(u){
+  if(u.role==='admin') return 'All 4 stores';
+  if(u.role==='area_manager') return storesForUser(u).map(s=>s.name).join(' · ');
+  return storeName(u.storeId);
+}
+function renderPage(){
+  switch(STATE.page){
+    case 'dashboard': return renderDashboard();
+    case 'attendance': return renderAttendance();
+    case 'tasks': return renderTasks();
+    case 'leave': return renderLeave();
+    case 'reports': return renderReports();
+    case 'team': return renderTeam();
+    case 'stores': return renderStores();
+    default: return '';
+  }
+}
+
+/* ============================= DASHBOARD ============================= */
+function renderDashboard(){
+  const u=STATE.user, ids=storeIdsForUser(u), today=todayStr();
+  ensureInstancesForDate(ids, today);
+  const scopedStaff=STATE.users.filter(x=>ids.includes(x.storeId));
+  const todaysAtt=STATE.attendance.filter(a=>ids.includes(a.storeId) && a.date===today);
+  const presentCount=todaysAtt.length;
+  const lateCount=todaysAtt.filter(a=>a.late).length;
+  const attPct=scopedStaff.length? Math.round(presentCount/scopedStaff.length*100):0;
+  const todaysTasks=STATE.taskInstances.filter(i=>ids.includes(i.storeId) && i.date===today);
+  const tasksDone=todaysTasks.filter(t=>t.completed).length;
+  const taskPct=todaysTasks.length? Math.round(tasksDone/todaysTasks.length*100):0;
+  const pendingLeaves=STATE.leaves.filter(l=>ids.includes(l.storeId) && l.status==='pending');
+
+  let personalPunch='';
+  if(u.storeId){
+    personalPunch=`<div class="section-title">Your Punch<span class="hint">Today · ${storeName(u.storeId)}</span></div>${renderPunchWidget()}`;
+  }
+
+  const storeRows=storesForUser(u).map(s=>{
+    const staff=STATE.users.filter(x=>x.storeId===s.id);
+    const att=STATE.attendance.filter(a=>a.storeId===s.id && a.date===today);
+    const pct=staff.length? Math.round(att.length/staff.length*100):0;
+    const tks=STATE.taskInstances.filter(t=>t.storeId===s.id && t.date===today);
+    const tdone=tks.filter(t=>t.completed).length;
+    return `<tr><td><b>${esc(s.name)}</b></td><td>${staff.length}</td><td>${att.length}/${staff.length} <span class="text-faint">(${pct}%)</span></td>
+      <td>${att.filter(a=>a.late).length}</td><td>${tdone}/${tks.length}</td></tr>`;
+  }).join('');
+
+  return `
+  ${personalPunch}
+  <div class="section-title">Overview<span class="hint">${fmtDate(today)}</span></div>
+  <div class="grid grid-4">
+    <div class="card stat-card"><div class="stat-label">Team</div><div class="stat-value">${scopedStaff.length}</div><div class="stat-note">across ${ids.length} store${ids.length!==1?'s':''}</div></div>
+    <div class="card stat-card"><div class="stat-label">Present Today</div><div class="stat-value">${attPct}%</div><div class="stat-note">${presentCount} of ${scopedStaff.length} punched in</div></div>
+    <div class="card stat-card"><div class="stat-label">Late Today</div><div class="stat-value" style="color:${lateCount?'var(--amber-dark)':'inherit'}">${lateCount}</div><div class="stat-note">after 9:45am</div></div>
+    <div class="card stat-card"><div class="stat-label">Tasks Done</div><div class="stat-value">${taskPct}%</div><div class="stat-note">${tasksDone} of ${todaysTasks.length} today</div></div>
+  </div>
+  ${storesForUser(u).length>1?`
+  <div class="section-title">Stores at a glance</div>
+  <div class="table-wrap"><table><thead><tr><th>Store</th><th>Staff</th><th>Present</th><th>Late</th><th>Tasks</th></tr></thead>
+  <tbody>${storeRows}</tbody></table></div>`:''}
+  <div class="section-title">Pending Leave Requests<span class="hint">${pendingLeaves.length}</span></div>
+  ${pendingLeaves.length? renderLeaveTable(pendingLeaves, true) : '<div class="empty-note">Nothing pending.</div>'}
+  `;
+}
+
+/* ============================= PUNCH WIDGET ============================= */
+function renderPunchWidget(){
+  const u=STATE.user, store=STATE.stores.find(s=>s.id===u.storeId);
+  const rec=todayRecordFor(u.id);
+  const now=new Date();
+  let btnHtml, statusColor=STATE.punchOk===false?'var(--alert)':(STATE.punchOk?'var(--success)':'rgba(255,255,255,0.75)');
+  if(!rec){
+    btnHtml=`<button class="punch-btn" id="punchInBtn">Punch In</button>`;
+  } else if(!rec.checkOutTime){
+    btnHtml=`<button class="punch-btn out" id="punchOutBtn">Punch Out</button>`;
+  } else {
+    btnHtml=`<button class="punch-btn" disabled>Done for Today</button>`;
+  }
+  return `
+  <div class="punch-wrap">
+    <div class="punch-card">
+      <div class="punch-time mono">${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
+      <div class="punch-date">${fmtDate(todayStr())}</div>
+      <div class="punch-store">${store? esc(store.name)+' · within '+RADIUS_M+'m required':'No store assigned'}</div>
+      ${btnHtml}
+      <div class="punch-status" style="color:${statusColor}">${esc(STATE.punchStatus||'')}</div>
+    </div>
+    <div class="ticket">
+      <h3>Today's Punch</h3>
+      <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec? fmtTime(rec.checkInTime):'—'}</span></div>
+      <div class="ticket-row"><span class="lbl">Status</span><span class="val">${rec? (rec.late?'<span class="pill pill-late">Late</span>':'<span class="pill pill-present">On time</span>') : '—'}</span></div>
+      <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${rec? fmtTime(rec.checkOutTime):'—'}</span></div>
+      <div class="ticket-row"><span class="lbl">Geo-fence</span><span class="val">${RADIUS_M}m radius</span></div>
+    </div>
+  </div>`;
+}
+
+/* ============================= ATTENDANCE PAGE ============================= */
+function renderAttendance(){
+  const u=STATE.user, ids=storeIdsForUser(u), today=todayStr();
+  let html='';
+  if(u.storeId){ html+=renderPunchWidget(); }
+  const staffScope = u.role==='sales_staff'? [u] : STATE.users.filter(x=>ids.includes(x.storeId) && x.role!=='admin' && x.role!=='area_manager');
+  const rows=staffScope.map(s=>{
+    const rec=STATE.attendance.find(a=>a.userId===s.id && a.date===today);
+    let pill='<span class="pill pill-absent">Absent</span>';
+    if(rec) pill = rec.late? '<span class="pill pill-late">Late</span>':'<span class="pill pill-present">Present</span>';
+    return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${esc(storeName(s.storeId))}</td>
+      <td>${rec? fmtTime(rec.checkInTime):'—'}</td><td>${rec? fmtTime(rec.checkOutTime):'—'}</td><td>${pill}</td></tr>`;
+  }).join('');
+  html+=`
+  <div class="section-title">${u.role==='sales_staff'?'Your record today':"Today's Roster"}<span class="hint">${fmtDate(today)}</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Store</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="5" class="empty-note">No one in scope.</td></tr>'}</tbody></table></div>
+  `;
+  if(u.role==='sales_staff'){
+    const rep=monthlyReport(u.id, STATE.month);
+    html+=renderMonthPicker()+renderReportSummary(rep)+renderReportRows(rep);
+  }
+  return html;
+}
+
+/* ============================= TASKS PAGE ============================= */
+function renderTasks(){
+  const u=STATE.user, ids=storeIdsForUser(u), today=todayStr();
+  ensureInstancesForDate(ids, today);
+  const canManage = u.role==='store_manager' || u.role==='admin';
+  let html='';
+  storesForUser(u).forEach(s=>{
+    const tasks=STATE.taskInstances.filter(t=>t.storeId===s.id && t.date===today);
+    const done=tasks.filter(t=>t.completed).length;
+    html+=`<div class="section-title">${esc(s.name)}<span class="hint">${done}/${tasks.length} complete</span></div>
+    <div class="table-wrap">${tasks.map(t=>`
+      <div class="task-row">
+        <div class="task-check ${t.completed?'done':''}" data-toggle="${t.id}">${t.completed?'✓':''}</div>
+        <div class="task-title ${t.completed?'done':''}">${esc(t.title)}</div>
+        <div class="task-meta">${t.completed? 'done by '+esc(userName(t.completedBy))+' · '+fmtTime(t.completedAt) : ''}</div>
+      </div>`).join('') || '<div class="empty-note">No tasks configured for this store yet.</div>'}
+    </div>
+    ${canManage && (u.role==='admin' || u.storeId===s.id) ? `
+      <div class="inline-form">
+        <input type="text" placeholder="Add a recurring daily task…" id="taskInput_${s.id}">
+        <button class="btn btn-ghost btn-sm" data-addtask="${s.id}">Add</button>
+      </div>
+      <details style="margin-top:8px;"><summary class="subtle-link">Manage checklist (${STATE.taskTemplates.filter(t=>t.storeId===s.id&&t.active).length} active)</summary>
+      <div style="margin-top:8px;">
+      ${STATE.taskTemplates.filter(t=>t.storeId===s.id&&t.active).map(t=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 2px;font-size:13px;">
+          <span>${esc(t.title)}</span><span class="subtle-link" style="color:var(--alert)" data-removetpl="${t.id}">Remove</span>
+        </div>`).join('')}
+      </div></details>` : ''}
+    `;
+  });
+  return html || '<div class="empty-note">No stores in your scope.</div>';
+}
+
+/* ============================= LEAVE PAGE ============================= */
+function renderLeave(){
+  const u=STATE.user, ids=storeIdsForUser(u);
+  let html='';
+  if(u.role!=='admin' && u.role!=='area_manager'){
+    html+=`
+    <div class="section-title">Request Leave</div>
+    <div class="card">
+      <form id="leaveForm">
+        <div class="two-col">
+          <div class="field"><label>From</label><input type="date" id="leaveFrom" required></div>
+          <div class="field"><label>To</label><input type="date" id="leaveTo" required></div>
+        </div>
+        <div class="field"><label>Reason</label><textarea id="leaveReason" rows="2" placeholder="Brief reason" required></textarea></div>
+        <button class="btn btn-primary" type="submit">Submit request</button>
+      </form>
+    </div>`;
+  }
+  const scoped = u.role==='sales_staff'||u.role==='store_manager'
+    ? STATE.leaves.filter(l=> u.role==='sales_staff'? l.userId===u.id : ids.includes(l.storeId))
+    : STATE.leaves.filter(l=>ids.includes(l.storeId));
+  const canDecide = u.role==='store_manager'||u.role==='area_manager'||u.role==='admin';
+  const pending=scoped.filter(l=>l.status==='pending');
+  const decided=scoped.filter(l=>l.status!=='pending');
+  html+=`<div class="section-title">Pending<span class="hint">${pending.length}</span></div>
+  ${pending.length? renderLeaveTable(pending, canDecide) : '<div class="empty-note">Nothing pending.</div>'}
+  <div class="section-title">History</div>
+  ${decided.length? renderLeaveTable(decided, false) : '<div class="empty-note">No past requests.</div>'}
+  `;
+  return html;
+}
+function renderLeaveTable(list, showActions){
+  const rows=list.slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt)).map(l=>`
+    <tr><td><b>${esc(userName(l.userId))}</b><div class="badge-role">${esc(storeName(l.storeId))}</div></td>
+    <td>${fmtDateShort(l.fromDate)} – ${fmtDateShort(l.toDate)}</td>
+    <td>${esc(l.reason)}</td>
+    <td><span class="pill pill-${l.status}">${l.status[0].toUpperCase()+l.status.slice(1)}</span></td>
+    <td>${showActions && l.status==='pending' ? `<button class="btn btn-sm btn-primary" data-approve="${l.id}">Approve</button> <button class="btn btn-sm btn-danger" data-reject="${l.id}">Reject</button>`:''}</td>
+    </tr>`).join('');
+  return `<div class="table-wrap"><table><thead><tr><th>Employee</th><th>Dates</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ============================= REPORTS PAGE ============================= */
+function renderMonthPicker(){
+  const label=STATE.month.toLocaleDateString([], {month:'long', year:'numeric'});
+  return `<div class="section-title">Monthly Report<span class="month-switch"><button data-month="-1">‹</button><span>${label}</span><button data-month="1">›</button></span></div>`;
+}
+function renderReportSummary(rep){
+  return `<div class="grid grid-4">
+    <div class="card stat-card"><div class="stat-label">Present</div><div class="stat-value" style="color:var(--success)">${rep.present}</div></div>
+    <div class="card stat-card"><div class="stat-label">Late</div><div class="stat-value" style="color:var(--amber-dark)">${rep.late}</div></div>
+    <div class="card stat-card"><div class="stat-label">Absent</div><div class="stat-value" style="color:var(--alert)">${rep.absent}</div></div>
+    <div class="card stat-card"><div class="stat-label">Leave</div><div class="stat-value" style="color:var(--steel)">${rep.leave}</div></div>
+  </div>`;
+}
+function renderReportRows(rep){
+  const rows=rep.rows.slice().reverse().map(r=>`<tr><td>${fmtDate(r.date)}</td><td><span class="pill pill-${r.status}">${r.status[0].toUpperCase()+r.status.slice(1)}</span></td>
+    <td>${r.rec? fmtTime(r.rec.checkInTime):'—'}</td><td>${r.rec? fmtTime(r.rec.checkOutTime):'—'}</td></tr>`).join('');
+  return `<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function renderReports(){
+  const u=STATE.user;
+  const staff=employeesForUser(u).filter(x=>x.role==='sales_staff'||x.role==='store_manager');
+  const summary=staff.map(s=>{
+    const rep=monthlyReport(s.id, STATE.month);
+    const total=rep.present+rep.late+rep.absent+rep.leave;
+    const pct=total? Math.round((rep.present+rep.late)/total*100):0;
+    return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))} · ${esc(storeName(s.storeId))}</div></td>
+      <td style="color:var(--success)">${rep.present}</td><td style="color:var(--amber-dark)">${rep.late}</td>
+      <td style="color:var(--alert)">${rep.absent}</td><td style="color:var(--steel)">${rep.leave}</td><td>${pct}%</td></tr>`;
+  }).join('');
+  return `
+  ${renderMonthPicker()}
+  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Attendance</th></tr></thead>
+  <tbody>${summary || '<tr><td colspan="6" class="empty-note">No staff in scope.</td></tr>'}</tbody></table></div>
+  `;
+}
+
+/* ============================= TEAM PAGE (admin) ============================= */
+function renderTeam(){
+  const rows=STATE.users.filter(u=>u.role!=='admin').map(u=>`
+    <tr><td><b>${esc(u.name)}</b><div class="badge-role">${esc(u.email)}</div></td>
+    <td>${esc(roleLabel(u.role))}</td>
+    <td>${u.role==='area_manager'? (u.storeIds||[]).map(storeName).join(', ') : esc(storeName(u.storeId))}</td>
+    <td>${u.active===false? '<span class="pill pill-absent">Inactive</span>':'<span class="pill pill-present">Active</span>'}</td>
+    <td><span class="subtle-link" data-toggleactive="${u.id}">${u.active===false?'Reactivate':'Deactivate'}</span></td></tr>`).join('');
+  return `
+  <div class="section-title">All Employees<span class="hint">${STATE.users.filter(u=>u.role!=='admin').length} people</span></div>
+  <button class="btn btn-amber btn-sm" id="addEmployeeBtn">+ Add employee</button>
+  <div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>Name</th><th>Role</th><th>Store(s)</th><th>Status</th><th></th></tr></thead>
+  <tbody>${rows}</tbody></table></div>
+  `;
+}
+
+/* ============================= STORES PAGE (admin) ============================= */
+function renderStores(){
+  const rows=STATE.stores.map(s=>{
+    const staff=STATE.users.filter(x=>x.storeId===s.id).length;
+    return `<tr><td><b>${esc(s.name)}</b></td><td>${esc(s.address||'—')}</td><td class="mono">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</td><td>${staff}</td></tr>`;
+  }).join('');
+  return `
+  <div class="section-title">Stores<span class="hint">${STATE.stores.length}</span></div>
+  <button class="btn btn-amber btn-sm" id="addStoreBtn">+ Add store</button>
+  <div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>Store</th><th>Address</th><th>Coordinates</th><th>Staff</th></tr></thead>
+  <tbody>${rows}</tbody></table></div>
+  <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">Coordinates define the center of the ${RADIUS_M}m check-in geofence for each store.</p>
+  `;
+}
+
+/* ============================= MODALS ============================= */
+function openModal(html){
+  const bg=document.createElement('div'); bg.className='modal-bg'; bg.id='modalBg';
+  bg.innerHTML=`<div class="modal">${html}</div>`;
+  bg.addEventListener('click', e=>{ if(e.target===bg) closeModal(); });
+  document.body.appendChild(bg);
+}
+function closeModal(){ const bg=document.getElementById('modalBg'); if(bg) bg.remove(); }
+
+function addEmployeeModal(){
+  const storeOpts=STATE.stores.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  openModal(`
+    <h3>Add employee</h3>
+    <form id="newEmpForm">
+      <div class="field"><label>Full name</label><input type="text" id="empName" required></div>
+      <div class="field"><label>Email</label><input type="email" id="empEmail" required></div>
+      <div class="field"><label>Password</label><input type="text" id="empPassword" value="welcome123" required></div>
+      <div class="field"><label>Role</label>
+        <select id="empRole">
+          <option value="sales_staff">Sales Staff</option>
+          <option value="store_manager">Store Manager</option>
+          <option value="area_manager">Area Manager</option>
+        </select>
+      </div>
+      <div class="field" id="storeField"><label>Store</label><select id="empStore">${storeOpts}</select></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="cancelModal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add employee</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('cancelModal').addEventListener('click', closeModal);
+  document.getElementById('empRole').addEventListener('change', e=>{
+    document.getElementById('storeField').style.display = e.target.value==='area_manager'? 'none':'block';
+  });
+  document.getElementById('newEmpForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const role=document.getElementById('empRole').value;
+    const u={id:uid(), name:document.getElementById('empName').value.trim(), email:document.getElementById('empEmail').value.trim(),
+      password:document.getElementById('empPassword').value, role,
+      storeId: role==='area_manager'? null: document.getElementById('empStore').value,
+      storeIds: role==='area_manager'? [document.getElementById('empStore').value] : null, active:true};
+    STATE.users.push(u); await persistUsers(); closeModal(); showToast('Employee added.'); render();
+  });
+}
+function addStoreModal(){
+  openModal(`
+    <h3>Add store</h3>
+    <form id="newStoreForm">
+      <div class="field"><label>Store name</label><input type="text" id="stName" required></div>
+      <div class="field"><label>Address</label><input type="text" id="stAddr"></div>
+      <div class="two-col">
+        <div class="field"><label>Latitude</label><input type="number" step="0.000001" id="stLat" required></div>
+        <div class="field"><label>Longitude</label><input type="number" step="0.000001" id="stLng" required></div>
+      </div>
+      <span class="subtle-link" id="useLocBtn">Use my current location</span>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="cancelModal2">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add store</button>
+      </div>
+    </form>
+  `);
+  document.getElementById('cancelModal2').addEventListener('click', closeModal);
+  document.getElementById('useLocBtn').addEventListener('click', async ()=>{
+    try{ const pos=await geoOnce(); document.getElementById('stLat').value=pos.coords.latitude.toFixed(6); document.getElementById('stLng').value=pos.coords.longitude.toFixed(6); }
+    catch(e){ showToast('Could not get location.'); }
+  });
+  document.getElementById('newStoreForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    const s={id:uid(), name:document.getElementById('stName').value.trim(), address:document.getElementById('stAddr').value.trim(),
+      lat:parseFloat(document.getElementById('stLat').value), lng:parseFloat(document.getElementById('stLng').value)};
+    STATE.stores.push(s); await persistStores(); closeModal(); showToast('Store added.'); render();
+  });
+}
+
+/* ============================= EVENT WIRING ============================= */
+function attachAppEvents(){
+  document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click', ()=>{ STATE.page=el.dataset.page; STATE.punchStatus=''; STATE.punchOk=null; render(); }));
+  const logoutBtn=document.getElementById('logoutBtn'); if(logoutBtn) logoutBtn.addEventListener('click', logout);
+
+  const punchInBtn=document.getElementById('punchInBtn'); if(punchInBtn) punchInBtn.addEventListener('click', punchIn);
+  const punchOutBtn=document.getElementById('punchOutBtn'); if(punchOutBtn) punchOutBtn.addEventListener('click', punchOut);
+
+  document.querySelectorAll('[data-toggle]').forEach(el=>el.addEventListener('click', ()=>toggleTask(el.dataset.toggle)));
+  document.querySelectorAll('[data-addtask]').forEach(el=>el.addEventListener('click', ()=>{
+    const sid=el.dataset.addtask; const inp=document.getElementById('taskInput_'+sid);
+    addTaskTemplate(sid, inp.value); inp.value='';
+  }));
+  document.querySelectorAll('[data-removetpl]').forEach(el=>el.addEventListener('click', ()=>removeTaskTemplate(el.dataset.removetpl)));
+
+  const leaveForm=document.getElementById('leaveForm');
+  if(leaveForm) leaveForm.addEventListener('submit', e=>{
+    e.preventDefault();
+    submitLeave(document.getElementById('leaveFrom').value, document.getElementById('leaveTo').value, document.getElementById('leaveReason').value);
+  });
+  document.querySelectorAll('[data-approve]').forEach(el=>el.addEventListener('click', ()=>decideLeave(el.dataset.approve,'approved')));
+  document.querySelectorAll('[data-reject]').forEach(el=>el.addEventListener('click', ()=>decideLeave(el.dataset.reject,'rejected')));
+
+  document.querySelectorAll('[data-month]').forEach(el=>el.addEventListener('click', ()=>{
+    const d=new Date(STATE.month); d.setMonth(d.getMonth()+parseInt(el.dataset.month)); STATE.month=d; render();
+  }));
+
+  const addEmpBtn=document.getElementById('addEmployeeBtn'); if(addEmpBtn) addEmpBtn.addEventListener('click', addEmployeeModal);
+  const addStoreBtn=document.getElementById('addStoreBtn'); if(addStoreBtn) addStoreBtn.addEventListener('click', addStoreModal);
+  document.querySelectorAll('[data-toggleactive]').forEach(el=>el.addEventListener('click', async ()=>{
+    const u=STATE.users.find(x=>x.id===el.dataset.toggleactive); u.active = u.active===false? true:false;
+    await persistUsers(); render();
+  }));
+
+  const clockEl=document.getElementById('liveClock');
+  if(clockEl){ tickClock(); }
+}
+let clockInterval=null;
+function tickClock(){
+  if(clockInterval) clearInterval(clockInterval);
+  const update=()=>{ const el=document.getElementById('liveClock'); if(el) el.textContent=new Date().toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit', second:'2-digit'}); };
+  update();
+  clockInterval=setInterval(update, 1000);
+}
+
+init();
+</script>
+</body>
+</html>
