@@ -258,24 +258,19 @@ function isSunday(dateStr){return new Date(dateStr+'T00:00:00').getDay()===0;}
 function showToast(msg){STATE.toast=msg;render();setTimeout(()=>{STATE.toast=null;render();},2800);}
 
 /* ---------- storage ---------- */
-/* async function saveKey(key,value,shared){
-  try{ await window.storage.set(key, JSON.stringify(value), shared); return true; }
-  catch(e){ console.error('save failed',key,e); showToast('Could not save — storage error.'); return false; }
-}
-async function loadKey(key,shared){
-  try{ const r=await window.storage.get(key,shared); return r? JSON.parse(r.value): null; }
-  catch(e){ return null; }
-} */
-
 // Change this URL to your deployed Render service URL later
 const BACKEND_API_URL = "https://jockey-tracker.onrender.com"; 
 
 async function saveKey(key, value, shared) {
   try {
-    // Session is user-specific, other keys are global app state
-    const storageKey = shared ? key : `${key}_local`;
-    
-    const response = await fetch(`${BACKEND_API_URL}/api/storage/${storageKey}`, {
+    // IF NOT SHARED: Keep it local to the device's browser
+    if (!shared) {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    }
+
+    // IF SHARED: Send it to the cloud MongoDB Atlas database
+    const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value })
@@ -285,15 +280,21 @@ async function saveKey(key, value, shared) {
     return true;
   } catch (e) {
     console.error('Save failed', key, e);
-    showToast('Could not save — database error.');
+    showToast('Could not save — storage error.');
     return false;
   }
 }
 
 async function loadKey(key, shared) {
   try {
-    const storageKey = shared ? key : `${key}_local`;
-    const response = await fetch(`${BACKEND_API_URL}/api/storage/${storageKey}`);
+    // IF NOT SHARED: Read from the local device's browser
+    if (!shared) {
+      const localData = localStorage.getItem(key);
+      return localData ? JSON.parse(localData) : null;
+    }
+
+    // IF SHARED: Fetch from the cloud MongoDB Atlas database
+    const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`);
     if (!response.ok) return null;
     return await response.json();
   } catch (e) {
@@ -301,7 +302,6 @@ async function loadKey(key, shared) {
     return null;
   }
 }
-
 const persistStores=()=>saveKey('stores',STATE.stores,true);
 const persistUsers=()=>saveKey('users',STATE.users,true);
 const persistTemplates=()=>saveKey('task_templates',STATE.taskTemplates,true);
