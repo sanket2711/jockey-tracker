@@ -13,7 +13,7 @@ import {
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
-export { todayStr, RADIUS_M, todayRecordFor };
+export { todayStr, RADIUS_M };
 
 export function todayRecordFor(userId) {
     return STATE.attendance.find(a => a.userId === userId && a.date === todayStr());
