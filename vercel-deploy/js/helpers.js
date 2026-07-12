@@ -52,5 +52,10 @@ export function isSunday(dateStr) {
 }
 
 export function roleLabel(r) {
-    return { admin: 'Admin / Owner', area_manager: 'Area Manager', store_manager: 'Store Manager', sales_staff: 'Sales Staff' }[r] || r;
+    return {
+        admin: 'Admin / Owner',
+        area_manager: 'Area Manager',
+        store_manager: 'Store Manager',
+        sales_staff: 'Sales Staff'
+    }[r] || r;
 }

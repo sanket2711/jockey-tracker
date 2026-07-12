@@ -288,3 +288,161 @@ export function renderStoresPage() {
   <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">Coordinates define the center of the ${RADIUS_M}m check-in geofence for each store.</p>
   `;
 }
+
+/* ---------- Interactive Overlay Modals ---------- */
+
+export function openModal(htmlContent) {
+    closeModal();
+
+    const modalBg = document.createElement('div');
+    modalBg.className = 'modal-bg';
+    modalBg.id = 'activeModal';
+    modalBg.innerHTML = `
+    <div class="modal">
+      \${htmlContent}
+    </div>
+  `;
+
+    document.body.appendChild(modalBg);
+
+    modalBg.addEventListener('click', (e) => {
+        if (e.target === modalBg) closeModal();
+    });
+}
+
+export function closeModal() {
+    const modal = document.getElementById('activeModal');
+    if (modal) modal.remove();
+}
+
+export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
+    const storeOptions = STATE.stores.map(s => `<option value="\${s.id}">\${esc(s.name)}</option>`).join('');
+
+    const content = `
+    <h3>Add New Employee</h3>
+    <form id="modalEmployeeForm" style="margin-top:14px;">
+      <div class="field"><label>Full Name</label><input type="text" id="empName" required></div>
+      <div class="field"><label>Email Address</label><input type="email" id="empEmail" required></div>
+      <div class="field"><label>Password</label><input type="text" id="empPass" value="staff123" required></div>
+      <div class="field">
+        <label>Role</label>
+        <select id="empRole">
+          <option value="sales_staff">Sales Staff</option>
+          <option value="store_manager">Store Manager</option>
+          <option value="area_manager">Area Manager</option>
+        </select>
+      </div>
+      <div class="field" id="storeSelectField">
+        <label>Assigned Store</label>
+        <select id="empStore">\${storeOptions}</select>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">Save Employee</button>
+        <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
+      </div>
+    </form>
+  `;
+
+    openModal(content);
+
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+
+    const roleSelect = document.getElementById('empRole');
+    const storeField = document.getElementById('storeSelectField');
+    roleSelect.addEventListener('change', () => {
+        storeField.style.display = roleSelect.value === 'area_manager' ? 'none' : 'block';
+    });
+
+    document.getElementById('modalEmployeeForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('empName').value.trim();
+        const email = document.getElementById('empEmail').value.trim();
+        const password = document.getElementById('empPass').value;
+        const role = roleSelect.value;
+        const storeId = role === 'area_manager' ? null : document.getElementById('empStore').value;
+
+        if (STATE.users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
+            alert('This email address is already registered.');
+            return;
+        }
+
+        // FIX: Wrapped ID inside template literals properly
+        const newEmp = {
+            id: `u_staff_\${uidGenerator()}`,
+            name,
+            email,
+            password,
+            role,
+            storeId,
+            storeIds: role === 'area_manager' ? [] : null,
+            active: true
+        };
+
+        STATE.users.push(newEmp);
+
+        const { persistUsers } = await import('./services.js');
+        await persistUsers();
+
+        closeModal();
+        showToast('New employee added successfully!');
+        triggerRender();
+    });
+}
+
+export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLocation) {
+    const content = `
+    <h3>Add New Store</h3>
+    <form id="modalStoreForm" style="margin-top:14px;">
+      <div class="field"><label>Store Name</label><input type="text" id="storeNameInput" required placeholder="e.g. MG Road"></div>
+      <div class="field"><label>Address</label><input type="text" id="storeAddress" required></div>
+      <div class="two-col">
+        <div class="field"><label>Latitude</label><input type="number" step="any" id="storeLat" required></div>
+        <div class="field"><label>Longitude</label><input type="number" step="any" id="storeLng" required></div>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm btn-block" id="fetchGeoBtn" style="margin-bottom:12px;">📍 Use My Current Location</button>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">Create Store</button>
+        <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
+      </div>
+    </form>
+  `;
+
+    openModal(content);
+
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+
+    const geoBtn = document.getElementById('fetchGeoBtn');
+    geoBtn.addEventListener('click', async () => {
+        geoBtn.textContent = 'Locating...';
+        try {
+            const pos = await getGeoLocation();
+            document.getElementById('storeLat').value = pos.coords.latitude;
+            document.getElementById('storeLng').value = pos.coords.longitude;
+            geoBtn.textContent = '📍 Location captured!';
+        } catch (err) {
+            alert('Could not access location: ' + err.message);
+            geoBtn.textContent = '📍 Use My Current Location';
+        }
+    });
+
+    document.getElementById('modalStoreForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('storeNameInput').value.trim();
+        const address = document.getElementById('storeAddress').value.trim();
+        const lat = parseFloat(document.getElementById('storeLat').value);
+        const lng = parseFloat(document.getElementById('storeLng').value);
+
+        // FIX: Wrapped ID inside template literals properly
+        const storeId = `st_\${uidGenerator()}`;
+        const newStore = { id: storeId, name, address, lat, lng };
+
+        STATE.stores.push(newStore);
+
+        const { persistStores } = await import('./services.js');
+        await persistStores();
+
+        closeModal();
+        showToast('New store profile generated.');
+        triggerRender();
+    });
+}

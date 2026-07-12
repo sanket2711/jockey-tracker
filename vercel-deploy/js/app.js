@@ -69,7 +69,7 @@ function showToast(msg) {
 async function login(email, password) {
     const u = STATE.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase() && x.password === password && x.active !== false);
     if (!u) return false;
-    STATE.user = u; STATE.page = 'dashboard';
+    STATE.user = u; STATE.page = 'dashboard'; STATE.navOpen = false;
     await saveKey('session', u.id, false);
     return true;
 }
@@ -100,6 +100,9 @@ export function render() {
 
     root.innerHTML = `
   <div class="app">
+    <!-- Responsive Background Overlay Clicker -->
+    <div class="sidebar-overlay ${STATE.navOpen ? 'visible' : ''}" id="sidebarOverlay"></div>
+
     <div class="sidebar ${STATE.navOpen ? 'open' : ''}" id="sidebar">
       <div class="brand-mark"><div class="brand-clock"></div><div><div class="brand-name">SHIFTLEDGER</div><div class="brand-sub">Store Ops</div></div></div>
       ${nav}
@@ -109,9 +112,17 @@ export function render() {
         <div class="logout-link" id="logoutBtn">Sign out</div>
       </div>
     </div>
+    
     <div class="main">
       <div class="topbar">
-        <div><h1>${pageTitle(STATE.page)}</h1><div class="ctx">${pageSubtitle(u)}</div></div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <!-- Hamburger Button Visible on Mobile -->
+          <button class="menu-toggle" id="menuToggleBtn">☰</button>
+          <div>
+            <h1>${pageTitle(STATE.page)}</h1>
+            <div class="ctx">${pageSubtitle(u)}</div>
+          </div>
+        </div>
         <div class="clock-live" id="liveClock"></div>
       </div>
       <div class="content">${renderPage()}</div>
@@ -154,6 +165,30 @@ function attachLoginEvents() {
 
 function attachAppEvents() {
     document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => { STATE.page = el.dataset.page; STATE.punchStatus = ''; STATE.punchOk = null; render(); }));
+    const menuToggleBtn = document.getElementById('menuToggleBtn');
+    if (menuToggleBtn) {
+        menuToggleBtn.addEventListener('click', () => {
+            STATE.navOpen = !STATE.navOpen;
+            render();
+        });
+    }
+
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', () => {
+            STATE.navOpen = false;
+            render();
+        });
+    }
+
+    // Modified Nav-Item Event: Added automatic drawer closing for small screens
+    document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => {
+        STATE.page = el.dataset.page;
+        STATE.punchStatus = '';
+        STATE.punchOk = null;
+        STATE.navOpen = false; // 🍏 Auto-closes menu when user taps an items on phone
+        render();
+    }));
     const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
