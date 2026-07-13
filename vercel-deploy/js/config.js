@@ -10,6 +10,7 @@ export const STATE = {
     ready: false,
     punchStatus: '',
     punchOk: null,
+    punchStoreId: null,
     month: new Date(),
     navOpen: false,
     toast: null

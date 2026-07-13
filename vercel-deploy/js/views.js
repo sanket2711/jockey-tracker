@@ -1,7 +1,7 @@
 import { STATE } from './config.js';
 import { esc, fmtTime, fmtDate, fmtDateShort, roleLabel } from './helpers.js';
 import { storeName, userName, storesForUser, storeIdsForUser, employeesForUser } from './services.js';
-import { todayStr, RADIUS_M, todayRecordFor, monthlyReport } from './app.js';
+import { todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected } from './app.js';
 
 export function renderLogin() {
     const demo = [
@@ -48,34 +48,76 @@ export function pageSubtitle(u) {
 }
 
 export function renderPunchWidget() {
-    const u = STATE.user, store = STATE.stores.find(s => s.id === u.storeId);
+    const u = STATE.user;
     const rec = todayRecordFor(u.id);
+    // Stores this user can punch against: single-store staff/managers use their assigned store;
+    // area managers choose from the stores they oversee. Anyone else (e.g. owner) gets no widget.
+    const punchStores = u.storeId
+        ? STATE.stores.filter(s => s.id === u.storeId)
+        : (u.role === 'area_manager' ? storesForUser(u) : []);
+    if (!punchStores.length) return '';
+    // Once punched (or pending), the store is locked to that record; otherwise honor the picker.
+    const savedId = STATE.punchStoreId && punchStores.some(s => s.id === STATE.punchStoreId) ? STATE.punchStoreId : null;
+    const activeStoreId = rec ? rec.storeId : (savedId || punchStores[0].id);
+    const store = STATE.stores.find(s => s.id === activeStoreId);
+    // Show the picker for store-less users (area managers) until they've punched for the day.
+    const showPicker = !rec && !u.storeId;
+    const storeLine = showPicker
+        ? `<select class="punch-store-select" id="punchStore">${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+       <div class="punch-store">within ${RADIUS_M}m of the selected store</div>`
+        : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
     const now = new Date();
     let btnHtml, statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
-    if (!rec) {
-        btnHtml = `<button class="punch-btn" id="punchInBtn">Punch In</button>`;
+    const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
+    if (isPunchPending(rec)) {
+        // Manual punch-in submitted and awaiting a manager's decision.
+        btnHtml = `<button class="punch-btn" disabled>Awaiting Approval</button>`;
+    } else if (!isPunchCountable(rec)) {
+        // No valid check-in yet today (never punched, or previous manual request was rejected).
+        btnHtml = `<button class="punch-btn" id="punchInBtn">Punch In</button>${manualLink}`;
     } else if (!rec.checkOutTime) {
         btnHtml = `<button class="punch-btn out" id="punchOutBtn">Punch Out</button>`;
     } else {
-        btnHtml = `<button class="punch-btn" disabled>Done for Today</button>`;
+        // Already checked out — punch-out stays available so the last one wins.
+        btnHtml = `<button class="punch-btn out" id="punchOutBtn">Update Punch Out</button>`;
     }
+
+    const outCount = rec && Array.isArray(rec.checkOutHistory) ? rec.checkOutHistory.length : 0;
+    let statusVal = '—';
+    if (isPunchPending(rec)) statusVal = '<span class="pill pill-pending">Pending approval</span>';
+    else if (isPunchRejected(rec)) statusVal = '<span class="pill pill-rejected">Rejected</span>';
+    else if (isPunchCountable(rec)) statusVal = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>';
+
     return `
   <div class="punch-wrap">
     <div class="punch-card">
       <div class="punch-time mono">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
       <div class="punch-date">${fmtDate(todayStr())}</div>
-      <div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>
+      ${storeLine}
       ${btnHtml}
       <div class="punch-status" style="color:${statusColor}">${esc(STATE.punchStatus || '')}</div>
     </div>
     <div class="ticket">
       <h3>Today's Punch</h3>
-      <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec ? fmtTime(rec.checkInTime) : '—'}</span></div>
-      <div class="ticket-row"><span class="lbl">Status</span><span class="val">${rec ? (rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>') : '—'}</span></div>
-      <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${rec ? fmtTime(rec.checkOutTime) : '—'}</span></div>
+      ${!u.storeId ? `<div class="ticket-row"><span class="lbl">Store</span><span class="val">${store ? esc(store.name) : '—'}</span></div>` : ''}
+      <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec && !isPunchRejected(rec) ? fmtTime(rec.checkInTime) + (rec.manual ? ' <span class="pill pill-pending">Manual</span>' : '') : '—'}</span></div>
+      <div class="ticket-row"><span class="lbl">Status</span><span class="val">${statusVal}</span></div>
+      <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${isPunchCountable(rec) && rec.checkOutTime ? fmtTime(rec.checkOutTime) + (outCount > 1 ? ` <span class="text-faint">(×${outCount})</span>` : '') : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Geo-fence</span><span class="val">${RADIUS_M}m radius</span></div>
+      ${rec && rec.manual && rec.manualReason ? `<div class="ticket-row"><span class="lbl">Reason</span><span class="val">${esc(rec.manualReason)}</span></div>` : ''}
     </div>
   </div>`;
+}
+
+export function renderPunchApprovalTable(list) {
+    const rows = list.slice().sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || '')).map(r => `
+    <tr><td><b>${esc(userName(r.userId))}</b><div class="badge-role">${esc(storeName(r.storeId))}</div></td>
+    <td>${fmtDateShort(r.date)}</td>
+    <td>${fmtTime(r.checkInTime)} ${r.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>'}</td>
+    <td>${esc(r.manualReason || '—')}</td>
+    <td><button class="btn btn-sm btn-primary" data-punch-approve="${r.id}">Approve</button> <button class="btn btn-sm btn-danger" data-punch-reject="${r.id}">Reject</button></td>
+    </tr>`).join('');
+    return `<div class="table-wrap"><table><thead><tr><th>Employee</th><th>Date</th><th>Claimed check-in</th><th>Reason</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderLeaveTable(list, showActions) {
@@ -112,24 +154,31 @@ export function renderReportRows(rep) {
 /* Page Routers Template Parsers */
 export function renderDashboard() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
+    const canDecide = u.role !== 'sales_staff';
     const scopedStaff = STATE.users.filter(x => ids.includes(x.storeId));
-    const todaysAtt = STATE.attendance.filter(a => ids.includes(a.storeId) && a.date === today);
+    const scopedStaffIds = new Set(scopedStaff.map(s => s.id));
+    // Count only in-scope staff so an area manager's own punch doesn't skew the team percentage.
+    const todaysAtt = STATE.attendance.filter(a => scopedStaffIds.has(a.userId) && a.date === today && isPunchCountable(a));
     const presentCount = todaysAtt.length;
     const lateCount = todaysAtt.filter(a => a.late).length;
     const attPct = scopedStaff.length ? Math.round(presentCount / scopedStaff.length * 100) : 0;
     const todaysTasks = STATE.taskInstances.filter(i => ids.includes(i.storeId) && i.date === today);
     const tasksDone = todaysTasks.filter(t => t.completed).length;
     const taskPct = todaysTasks.length ? Math.round(tasksDone / todaysTasks.length * 100) : 0;
-    const pendingLeaves = STATE.leaves.filter(l => ids.includes(l.storeId) && l.status === 'pending');
+    const pendingLeaves = canDecide ? STATE.leaves.filter(l => l.status === 'pending' && l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId))) : [];
+    const pendingPunches = canDecide ? STATE.attendance.filter(a => ids.includes(a.storeId) && a.approvalStatus === 'pending' && a.userId !== u.id) : [];
 
     let personalPunch = '';
-    if (u.storeId) {
-        personalPunch = `<div class="section-title">Your Punch<span class="hint">Today · ${storeName(u.storeId)}</span></div>${renderPunchWidget()}`;
+    const punchWidget = renderPunchWidget();
+    if (punchWidget) {
+        const hint = u.storeId ? storeName(u.storeId) : 'Select your store';
+        personalPunch = `<div class="section-title">Your Punch<span class="hint">Today · ${hint}</span></div>${punchWidget}`;
     }
 
     const storeRows = storesForUser(u).map(s => {
         const staff = STATE.users.filter(x => x.storeId === s.id);
-        const att = STATE.attendance.filter(a => a.storeId === s.id && a.date === today);
+        const staffIds = new Set(staff.map(x => x.id));
+        const att = STATE.attendance.filter(a => a.storeId === s.id && a.date === today && staffIds.has(a.userId) && isPunchCountable(a));
         const pct = staff.length ? Math.round(att.length / staff.length * 100) : 0;
         const tks = STATE.taskInstances.filter(t => t.storeId === s.id && t.date === today);
         const tdone = tks.filter(t => t.completed).length;
@@ -150,22 +199,27 @@ export function renderDashboard() {
   <div class="section-title">Stores at a glance</div>
   <div class="table-wrap"><table><thead><tr><th>Store</th><th>Staff</th><th>Present</th><th>Late</th><th>Tasks</th></tr></thead>
   <tbody>${storeRows}</tbody></table></div>` : ''}
+  ${canDecide ? `
+  <div class="section-title">Pending Punch-In Approvals<span class="hint">${pendingPunches.length}</span></div>
+  ${pendingPunches.length ? renderPunchApprovalTable(pendingPunches) : '<div class="empty-note">Nothing pending.</div>'}
   <div class="section-title">Pending Leave Requests<span class="hint">${pendingLeaves.length}</span></div>
-  ${pendingLeaves.length ? renderLeaveTable(pendingLeaves, true) : '<div class="empty-note">Nothing pending.</div>'}
+  ${pendingLeaves.length ? renderLeaveTable(pendingLeaves, true) : '<div class="empty-note">Nothing pending.</div>'}` : ''}
   `;
 }
 
 export function renderAttendancePage() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
     let html = '';
-    if (u.storeId) { html += renderPunchWidget(); }
+    html += renderPunchWidget();
     const staffScope = u.role === 'sales_staff' ? [u] : STATE.users.filter(x => ids.includes(x.storeId) && x.role !== 'admin' && x.role !== 'area_manager');
     const rows = staffScope.map(s => {
         const rec = STATE.attendance.find(a => a.userId === s.id && a.date === today);
+        const show = rec && !isPunchRejected(rec);
         let pill = '<span class="pill pill-absent">Absent</span>';
-        if (rec) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
+        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
         return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${esc(storeName(s.storeId))}</td>
-      <td>${rec ? fmtTime(rec.checkInTime) : '—'}</td><td>${rec ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr>`;
+      <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr>`;
     }).join('');
     html += `
   <div class="section-title">${u.role === 'sales_staff' ? 'Your record today' : "Today's Roster"}<span class="hint">${fmtDate(today)}</span></div>
@@ -214,7 +268,9 @@ export function renderTasksPage() {
 export function renderLeavePage() {
     const u = STATE.user, ids = storeIdsForUser(u);
     let html = '';
-    if (u.role !== 'admin' && u.role !== 'area_manager') {
+    // Everyone except the owner/admin can request their own leave — staff, store managers and area managers.
+    const canRequest = u.role !== 'admin';
+    if (canRequest) {
         html += `
     <div class="section-title">Request Leave</div>
     <div class="card">
@@ -228,17 +284,26 @@ export function renderLeavePage() {
       </form>
     </div>`;
     }
-    const scoped = u.role === 'sales_staff' || u.role === 'store_manager'
-        ? STATE.leaves.filter(l => u.role === 'sales_staff' ? l.userId === u.id : ids.includes(l.storeId))
-        : STATE.leaves.filter(l => ids.includes(l.storeId));
+
+    // Your own requests (never approvable by yourself).
+    if (canRequest) {
+        const mine = STATE.leaves.filter(l => l.userId === u.id);
+        const minePending = mine.filter(l => l.status === 'pending');
+        html += `<div class="section-title">Your Requests<span class="hint">${minePending.length} pending</span></div>
+  ${mine.length ? renderLeaveTable(mine, false) : '<div class="empty-note">You have no leave requests.</div>'}`;
+    }
+
+    // Requests this user can act on. Store-less (area manager) requests route to the owner/admin only.
     const canDecide = u.role === 'store_manager' || u.role === 'area_manager' || u.role === 'admin';
-    const pending = scoped.filter(l => l.status === 'pending');
-    const decided = scoped.filter(l => l.status !== 'pending');
-    html += `<div class="section-title">Pending<span class="hint">${pending.length}</span></div>
-  ${pending.length ? renderLeaveTable(pending, canDecide) : '<div class="empty-note">Nothing pending.</div>'}
-  <div class="section-title">History</div>
-  ${decided.length ? renderLeaveTable(decided, false) : '<div class="empty-note">No past requests.</div>'}
-  `;
+    if (canDecide) {
+        const approvals = STATE.leaves.filter(l => l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId)));
+        const pending = approvals.filter(l => l.status === 'pending');
+        const decided = approvals.filter(l => l.status !== 'pending');
+        html += `<div class="section-title">Approvals · Pending<span class="hint">${pending.length}</span></div>
+  ${pending.length ? renderLeaveTable(pending, true) : '<div class="empty-note">Nothing pending.</div>'}
+  <div class="section-title">Approvals · History</div>
+  ${decided.length ? renderLeaveTable(decided, false) : '<div class="empty-note">No past decisions.</div>'}`;
+    }
     return html;
 }
 
@@ -299,7 +364,7 @@ export function openModal(htmlContent) {
     modalBg.id = 'activeModal';
     modalBg.innerHTML = `
     <div class="modal">
-      \${htmlContent}
+      ${htmlContent}
     </div>
   `;
 
@@ -316,7 +381,7 @@ export function closeModal() {
 }
 
 export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
-    const storeOptions = STATE.stores.map(s => `<option value="\${s.id}">\${esc(s.name)}</option>`).join('');
+    const storeOptions = STATE.stores.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
 
     const content = `
     <h3>Add New Employee</h3>
@@ -334,7 +399,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
       </div>
       <div class="field" id="storeSelectField">
         <label>Assigned Store</label>
-        <select id="empStore">\${storeOptions}</select>
+        <select id="empStore">${storeOptions}</select>
       </div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">Save Employee</button>
@@ -366,9 +431,8 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
             return;
         }
 
-        // FIX: Wrapped ID inside template literals properly
         const newEmp = {
-            id: `u_staff_\${uidGenerator()}`,
+            id: `u_staff_${uidGenerator()}`,
             name,
             email,
             password,
@@ -432,8 +496,7 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
         const lat = parseFloat(document.getElementById('storeLat').value);
         const lng = parseFloat(document.getElementById('storeLng').value);
 
-        // FIX: Wrapped ID inside template literals properly
-        const storeId = `st_\${uidGenerator()}`;
+        const storeId = `st_${uidGenerator()}`;
         const newStore = { id: storeId, name, address, lat, lng };
 
         STATE.stores.push(newStore);
@@ -443,6 +506,70 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
 
         closeModal();
         showToast('New store profile generated.');
+        triggerRender();
+    });
+}
+
+export function manualPunchModal(triggerRender, showToast, uidGenerator) {
+    const u = STATE.user;
+    // Area managers (no fixed store) choose which store the missed punch was at.
+    const storeChoices = u.storeId ? [] : (u.role === 'area_manager' ? storesForUser(u) : []);
+    const storeField = storeChoices.length
+        ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>`
+        : '';
+    const content = `
+    <h3>Request Manual Punch-In</h3>
+    <p style="font-size:12.5px;color:var(--text-soft);margin:8px 0 14px;">
+      Missed punching in today? Enter your actual arrival time and a reason. This is sent to your
+      store manager / area manager / owner for approval and only counts once approved.
+    </p>
+    <form id="manualPunchForm">
+      ${storeField}
+      <div class="field"><label>Arrival time (today)</label><input type="time" id="manualTime" required></div>
+      <div class="field"><label>Reason for missing punch-in</label><textarea id="manualReason" rows="2" required placeholder="e.g. Phone battery died, GPS not working…"></textarea></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn btn-primary">Submit for approval</button>
+        <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
+      </div>
+    </form>
+  `;
+
+    openModal(content);
+
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+
+    document.getElementById('manualPunchForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const timeVal = document.getElementById('manualTime').value;      // "HH:MM"
+        const reason = document.getElementById('manualReason').value.trim();
+        const storeSel = document.getElementById('manualStore');
+        const storeId = storeSel ? storeSel.value : u.storeId;
+        if (!timeVal || !reason) return;
+        if (!storeId) { alert('Select a store for the manual punch-in.'); return; }
+
+        const now = new Date();
+        const [hh, mm] = timeVal.split(':').map(Number);
+        const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+        if (dt.getTime() > now.getTime()) { alert('Arrival time cannot be in the future.'); return; }
+
+        const { localDateStr, isLateAt } = await import('./helpers.js');
+        const { persistAttendance } = await import('./services.js');
+        const date = localDateStr(now);
+
+        // Replace any rejected request for today so a fresh one can be raised.
+        STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
+
+        STATE.attendance.push({
+            id: uidGenerator(), userId: u.id, storeId, date,
+            checkInTime: dt.toISOString(), checkInLoc: null,
+            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
+            late: isLateAt(dt), manual: true, manualReason: reason,
+            approvalStatus: 'pending', requestedAt: now.toISOString(), decidedBy: null, decidedAt: null
+        });
+
+        await persistAttendance();
+        closeModal();
+        showToast('Manual punch-in submitted for approval.');
         triggerRender();
     });
 }

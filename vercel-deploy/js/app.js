@@ -1,5 +1,5 @@
 import { STATE, RADIUS_M } from './config.js';
-import { uid, todayStr, localDateStr, distanceMeters, isLateAt, isSunday } from './helpers.js';
+import { uid, todayStr, localDateStr, distanceMeters, isLateAt } from './helpers.js';
 import {
     loadKey, saveKey, seedData, storeIdsForUser,
     persistInstances, persistTemplates, persistAttendance,
@@ -9,7 +9,7 @@ import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
-    openModal, closeModal, addEmployeeModal, addStoreModal
+    openModal, closeModal, addEmployeeModal, addStoreModal, manualPunchModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -17,6 +17,17 @@ export { todayStr, RADIUS_M };
 
 export function todayRecordFor(userId) {
     return STATE.attendance.find(a => a.userId === userId && a.date === todayStr());
+}
+
+/* Punch approval helpers — records with no approvalStatus are legacy/normal punches (treated as approved) */
+export function isPunchPending(rec) {
+    return !!rec && rec.approvalStatus === 'pending';
+}
+export function isPunchRejected(rec) {
+    return !!rec && rec.approvalStatus === 'rejected';
+}
+export function isPunchCountable(rec) {
+    return !!rec && (!rec.approvalStatus || rec.approvalStatus === 'approved');
 }
 
 function geoOnce() {
@@ -48,14 +59,15 @@ export function monthlyReport(userId, monthDate) {
     const rows = [];
     for (let d = 1; d <= lastDay; d++) {
         const dt = new Date(y, m, d); const ds = localDateStr(dt);
-        if (isSunday(ds)) continue;
+        // if (isSunday(ds)) continue;
         const rec = STATE.attendance.find(a => a.userId === userId && a.date === ds);
         const onLeave = STATE.leaves.find(l => l.userId === userId && l.status === 'approved' && ds >= l.fromDate && ds <= l.toDate);
         let status;
         if (onLeave) { status = 'leave'; leave++; }
-        else if (rec) { status = rec.late ? 'late' : 'present'; rec.late ? late++ : present++; }
+        else if (isPunchPending(rec)) { status = 'pending'; }
+        else if (isPunchCountable(rec)) { status = rec.late ? 'late' : 'present'; rec.late ? late++ : present++; }
         else { status = 'absent'; absent++; }
-        rows.push({ date: ds, status, rec });
+        rows.push({ date: ds, status, rec: isPunchRejected(rec) ? null : rec });
     }
     return { present, late, absent, leave, rows };
 }
@@ -193,6 +205,20 @@ function attachAppEvents() {
 
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
+    const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
+    const punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
+
+    document.querySelectorAll('[data-punch-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.attendance.find(a => a.id === el.dataset.punchApprove); if (!rec) return;
+        rec.approvalStatus = 'approved'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString();
+        await persistAttendance(); showToast('Manual punch-in approved.'); render();
+    }));
+
+    document.querySelectorAll('[data-punch-reject]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.attendance.find(a => a.id === el.dataset.punchReject); if (!rec) return;
+        rec.approvalStatus = 'rejected'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString();
+        await persistAttendance(); showToast('Manual punch-in rejected.'); render();
+    }));
 
     document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('click', async () => {
         const inst = STATE.taskInstances.find(i => i.id === el.dataset.toggle); if (!inst) return;
@@ -253,29 +279,49 @@ function attachAppEvents() {
 }
 
 async function handlePunchIn() {
-    const u = STATE.user, store = STATE.stores.find(s => s.id === u.storeId);
-    if (!store) { STATE.punchStatus = 'No store assigned.'; STATE.punchOk = false; render(); return; }
+    const u = STATE.user;
+    const existing = todayRecordFor(u.id);
+    // Punch-in is allowed only once per day. A pending manual request or an already-recorded
+    // punch-in blocks a fresh one; a previously rejected request can be replaced.
+    if (isPunchPending(existing)) { STATE.punchStatus = 'A manual punch-in is awaiting approval.'; STATE.punchOk = false; render(); return; }
+    if (isPunchCountable(existing)) { STATE.punchStatus = 'You have already punched in today.'; STATE.punchOk = false; render(); return; }
+    // Store is fixed for single-store staff/managers; area managers pick it from the widget.
+    const sel = document.getElementById('punchStore');
+    const storeId = sel ? sel.value : u.storeId;
+    const store = STATE.stores.find(s => s.id === storeId);
+    if (!store) { STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.'; STATE.punchOk = false; render(); return; }
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
         const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
         const dist = distanceMeters(latitude, longitude, store.lat, store.lng);
         if (dist > RADIUS_M) { STATE.punchStatus = `You're ${Math.round(dist)}m away.`; STATE.punchOk = false; render(); return; }
-        const now = new Date();
-        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date: localDateStr(now), checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, late: isLateAt(now) });
+        const now = new Date(), date = localDateStr(now);
+        // Clear any rejected request for today so it doesn't linger alongside the real punch.
+        STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
+        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], late: isLateAt(now) });
         await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
 
 async function handlePunchOut() {
-    const u = STATE.user, store = STATE.stores.find(s => s.id === u.storeId), rec = todayRecordFor(u.id);
-    if (!rec || rec.checkOutTime) return;
+    const u = STATE.user, rec = todayRecordFor(u.id);
+    // Punch-out can be repeated any number of times; the latest one is the record of truth.
+    // Blocked only if there is no valid (approved/normal) check-in to close.
+    if (!isPunchCountable(rec)) return;
+    // Geofence the punch-out against the same store the user checked in at.
+    const store = STATE.stores.find(s => s.id === rec.storeId);
+    if (!store) { STATE.punchStatus = 'Store for today\'s punch not found.'; STATE.punchOk = false; render(); return; }
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
         const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
         const dist = distanceMeters(latitude, longitude, store.lat, store.lng);
         if (dist > RADIUS_M) { STATE.punchStatus = `You're ${Math.round(dist)}m away.`; STATE.punchOk = false; render(); return; }
-        const now = new Date(); rec.checkOutTime = now.toISOString(); rec.checkOutLoc = { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) };
-        await persistAttendance(); STATE.punchStatus = `Punched out successfully.`; STATE.punchOk = true; render();
+        const now = new Date(), loc = { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) };
+        const isUpdate = !!rec.checkOutTime;
+        rec.checkOutTime = now.toISOString(); rec.checkOutLoc = loc;
+        if (!Array.isArray(rec.checkOutHistory)) rec.checkOutHistory = [];
+        rec.checkOutHistory.push({ time: rec.checkOutTime, loc });
+        await persistAttendance(); STATE.punchStatus = isUpdate ? `Punch-out updated (last out kept).` : `Punched out successfully.`; STATE.punchOk = true; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
 
@@ -300,6 +346,8 @@ async function init() {
     }
     STATE.stores = stores || []; STATE.users = users || []; STATE.taskTemplates = taskTemplates || [];
     STATE.attendance = attendance || []; STATE.taskInstances = taskInstances || []; STATE.leaves = leaves || [];
+    // Materialize today's checklist from active templates so staff/managers actually see tasks to tick off.
+    ensureInstancesForDate(STATE.stores.map(s => s.id), todayStr());
     const sessionId = await loadKey('session', false);
     if (sessionId) { const u = STATE.users.find(x => x.id === sessionId); if (u) STATE.user = u; }
     STATE.ready = true;

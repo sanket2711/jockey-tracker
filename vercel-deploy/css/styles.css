@@ -175,6 +175,12 @@ tr:last-child td{border-bottom:none;}
 .punch-btn.out{border-color:var(--alert);color:#f0a5a8;}
 .punch-btn.out:hover{background:var(--alert);color:#fff;}
 .punch-status{margin-top:16px;font-size:12.5px;min-height:18px;color:rgba(255,255,255,0.75);}
+.punch-link{margin-top:14px;background:none;border:none;color:var(--amber);font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;font-family:'Inter',sans-serif;}
+.punch-link:hover{color:#fff;}
+.punch-store-select{margin-top:14px;width:100%;max-width:240px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:#fff;font-family:'Inter',sans-serif;font-size:13.5px;cursor:pointer;}
+.punch-store-select:focus{outline:none;border-color:var(--amber);}
+.punch-store-select option{color:var(--ink);}
+.text-faint{color:var(--text-faint);}
 .ticket{
     flex:1;min-width:260px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;
 }
