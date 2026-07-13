@@ -67,6 +67,20 @@ export function renderPunchWidget() {
        <div class="punch-store">within ${RADIUS_M}m of the selected store</div>`
         : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
     const now = new Date();
+    let shiftSelectorHtml = '';
+    if (!rec && store) {
+        const s1 = `${store.shift1Start || '—'} – ${store.shift1End || '—'}`;
+        const s2 = `${store.shift2Start || '—'} – ${store.shift2End || '—'}`;
+        const activeShift = STATE.punchShift === 2 ? 2 : 1;
+        shiftSelectorHtml = `
+      <div class="punch-shift-row">
+        <label class="punch-shift-label">Shift</label>
+        <select id="punchShift" class="punch-shift-select">
+          <option value="1" ${activeShift === 1 ? 'selected' : ''}>Shift 1 (${s1})</option>
+          <option value="2" ${activeShift === 2 ? 'selected' : ''}>Shift 2 (${s2})</option>
+        </select>
+      </div>`;
+    }
     let btnHtml, statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
     const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
     if (isPunchPending(rec)) {
@@ -94,6 +108,7 @@ export function renderPunchWidget() {
       <div class="punch-time mono">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
       <div class="punch-date">${fmtDate(todayStr())}</div>
       ${storeLine}
+      ${shiftSelectorHtml}
       ${btnHtml}
       <div class="punch-status" style="color:${statusColor}">${esc(STATE.punchStatus || '')}</div>
     </div>
@@ -337,9 +352,23 @@ export function renderReportsPage() {
         const rep = monthlyReport(s.id, STATE.month);
         const total = rep.present + rep.late + rep.absent + rep.leave;
         const pct = total ? Math.round((rep.present + rep.late) / total * 100) : 0;
-        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))} · ${esc(storeName(s.storeId))}</div></td>
-      <td style="color:var(--success)">${rep.present}</td><td style="color:var(--amber-dark)">${rep.late}</td>
-      <td style="color:var(--alert)">${rep.absent}</td><td style="color:var(--steel)">${rep.leave}</td><td>${pct}%</td></tr>`;
+
+        const netMin = (rep.totalOverMin || 0) - (rep.totalUnderMin || 0);
+        const netHours = (netMin / 60).toFixed(1);
+        const netLabel = `${netHours} h ${netMin >= 0 ? 'OT' : 'UT'}`;  // OT=over, UT=under
+
+        return `<tr>
+      <td>
+        <b>${esc(s.name)}</b>
+        <div class="badge-role">${esc(roleLabel(s.role))} · ${esc(storeName(s.storeId))}</div>
+      </td>
+      <td style="color:var(--success)">${rep.present}</td>
+      <td style="color:var(--amber-dark)">${rep.late}</td>
+      <td style="color:var(--alert)">${rep.absent}</td>
+      <td style="color:var(--steel)">${rep.leave}</td>
+      <td>${netLabel}</td>
+      <td>${pct}%</td>
+    </tr>`;
     }).join('');
 
     // Render Store Dropdown
@@ -400,38 +429,73 @@ export function renderReportsPage() {
           </div>
       </div>
   </div>
-  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Attendance</th></tr></thead>
+  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Under/Overtime</th><th>Attendance</th></tr></thead>
   <tbody>${summary || '<tr><td colspan="6" class="empty-note">No staff in scope.</td></tr>'}</tbody></table></div>
   `;
 }
 
 export function renderTeamPage() {
-    const rows = STATE.users.filter(u => u.role !== 'admin').map(u => `
-    <tr><td><b>${esc(u.name)}</b><div class="badge-role">${esc(u.email)}</div></td>
-    <td>${esc(roleLabel(u.role))}</td>
-    <td>${u.role === 'area_manager' ? (u.storeIds || []).map(storeName).join(', ') : esc(storeName(u.storeId))}</td>
-    <td>${u.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
-    <td><span class="subtle-link" data-toggleactive="${u.id}">${u.active === false ? 'Reactivate' : 'Deactivate'}</span></td></tr>`).join('');
+    const rows = STATE.users
+        .filter(u => u.role !== 'admin')
+        .map(u => `
+        <tr>
+          <td>
+            <b>${esc(u.name)}</b>
+            <div class="badge-role">${esc(u.email)}</div>
+          </td>
+          <td>${esc(roleLabel(u.role))}</td>
+          <td>${u.role === 'area_manager'
+            ? (u.storeIds || []).map(storeName).join(', ') || '—'
+            : esc(storeName(u.storeId))}</td>
+          <td>${u.active === false
+            ? '<span class="pill pill-absent">Inactive</span>'
+            : '<span class="pill pill-present">Active</span>'}</td>
+          <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u.id}">Edit</button></td>
+        </tr>`).join('');
+
     return `
-  <div class="section-title">All Employees<span class="hint">${STATE.users.filter(u => u.role !== 'admin').length} people</span></div>
-  <button class="btn btn-amber btn-sm" id="addEmployeeBtn">+ Add employee</button>
-  <div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>Name</th><th>Role</th><th>Store(s)</th><th>Status</th><th></th></tr></thead>
-  <tbody>${rows}</tbody></table></div>
-  `;
+      <div class="section-title">All Employees<span class="hint">${STATE.users.filter(u => u.role !== 'admin').length} people</span></div>
+      <button class="btn btn-amber btn-sm btn-block" id="addEmployeeBtn">+ Add employee</button>
+      <div class="table-wrap mobile-table-cards" style="margin-top:14px;">
+        <table>
+          <thead><tr><th>Name</th><th>Role</th><th>Store(s)</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
 }
 
 export function renderStoresPage() {
     const rows = STATE.stores.map(s => {
         const staff = STATE.users.filter(x => x.storeId === s.id).length;
-        return `<tr><td><b>${esc(s.name)}</b></td><td>${esc(s.address || '—')}</td><td class="mono">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</td><td>${staff}</td></tr>`;
+        const shifts = `S1 ${s.shift1Start || '—'}-${s.shift1End || '—'} · S2 ${s.shift2Start || '—'}-${s.shift2End || '—'}`;
+
+        return `
+          <tr>
+            <td>
+              <b>${esc(s.name)}</b>
+              <div class="badge-role">${esc(shifts)}</div>
+            </td>
+            <td>${esc(s.address || '—')}</td>
+            <td class="mono">${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</td>
+            <td>${staff}</td>
+            <td><button class="btn btn-ghost btn-sm btn-block" data-editstore="${s.id}">Edit</button></td>
+          </tr>`;
     }).join('');
+
     return `
-  <div class="section-title">Stores<span class="hint">${STATE.stores.length}</span></div>
-  <button class="btn btn-amber btn-sm" id="addStoreBtn">+ Add store</button>
-  <div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>Store</th><th>Address</th><th>Coordinates</th><th>Staff</th></tr></thead>
-  <tbody>${rows}</tbody></table></div>
-  <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">Coordinates define the center of the ${RADIUS_M}m check-in geofence for each store.</p>
-  `;
+      <div class="section-title">Stores<span class="hint">${STATE.stores.length}</span></div>
+      <button class="btn btn-amber btn-sm btn-block" id="addStoreBtn">+ Add store</button>
+      <div class="table-wrap mobile-table-cards" style="margin-top:14px;">
+        <table>
+          <thead><tr><th>Store</th><th>Address</th><th>Coordinates</th><th>Staff</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">
+        Coordinates define the center of the ${RADIUS_M}m check-in geofence for each store.
+      </p>
+    `;
 }
 
 /* ---------- Interactive Overlay Modals ---------- */
@@ -461,54 +525,102 @@ export function closeModal() {
 }
 
 export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
-    const storeOptions = STATE.stores.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+    const singleStoreOptions = STATE.stores
+        .map(s => `<option value="${s.id}">${esc(s.name)}</option>`)
+        .join('');
+
+    const multiStoreOptions = STATE.stores
+        .map(s => `
+          <label class="multi-check-row">
+            <input type="checkbox" class="emp-area-store" value="${s.id}">
+            <span>${esc(s.name)}</span>
+          </label>
+        `).join('');
 
     const content = `
-    <h3>Add New Employee</h3>
-    <form id="modalEmployeeForm" style="margin-top:14px;">
-      <div class="field"><label>Full Name</label><input type="text" id="empName" required></div>
-      <div class="field"><label>Email Address</label><input type="email" id="empEmail" required></div>
-      <div class="field"><label>Password</label><input type="text" id="empPass" value="staff123" required></div>
-      <div class="field">
-        <label>Role</label>
-        <select id="empRole">
-          <option value="sales_staff">Sales Staff</option>
-          <option value="store_manager">Store Manager</option>
-          <option value="area_manager">Area Manager</option>
-        </select>
+      <div class="modal-head">
+        <h3>Add Employee</h3>
+        <button type="button" class="icon-close" id="closeModalBtn" aria-label="Close">✕</button>
       </div>
-      <div class="field" id="storeSelectField">
-        <label>Assigned Store</label>
-        <select id="empStore">${storeOptions}</select>
-      </div>
-      <div class="modal-actions">
-        <button type="submit" class="btn btn-primary">Save Employee</button>
-        <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
-      </div>
-    </form>
-  `;
+
+      <form id="modalEmployeeForm" class="stack-form">
+        <div class="field"><label>Full Name</label><input type="text" id="empName" required></div>
+        <div class="field"><label>Email Address</label><input type="email" id="empEmail" required></div>
+        <div class="field"><label>Password</label><input type="text" id="empPass" value="staff123" required></div>
+
+        <div class="field">
+          <label>Role</label>
+          <select id="empRole">
+            <option value="sales_staff">Sales Staff</option>
+            <option value="store_manager">Store Manager</option>
+            <option value="area_manager">Area Manager</option>
+          </select>
+        </div>
+
+        <div class="field" id="singleStoreField">
+          <label>Assigned Store</label>
+          <select id="empStore">${singleStoreOptions}</select>
+        </div>
+
+        <div class="field" id="multiStoreField" style="display:none;">
+          <label>Managed Stores</label>
+          <div class="multi-check-list">
+            ${multiStoreOptions || '<div class="empty-note">No stores available.</div>'}
+          </div>
+          <div class="field-note">Select one or more stores for this area manager.</div>
+        </div>
+
+        <div class="modal-actions mobile-actions">
+          <button type="submit" class="btn btn-primary btn-block">Save Employee</button>
+          <button type="button" class="btn btn-ghost btn-block" id="cancelEmployeeBtn">Cancel</button>
+        </div>
+      </form>
+    `;
 
     openModal(content);
 
-    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    const closeBtn = document.getElementById('closeModalBtn');
+    const cancelBtn = document.getElementById('cancelEmployeeBtn');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
 
     const roleSelect = document.getElementById('empRole');
-    const storeField = document.getElementById('storeSelectField');
-    roleSelect.addEventListener('change', () => {
-        storeField.style.display = roleSelect.value === 'area_manager' ? 'none' : 'block';
-    });
+    const singleStoreField = document.getElementById('singleStoreField');
+    const multiStoreField = document.getElementById('multiStoreField');
+
+    const syncRoleFields = () => {
+        const isArea = roleSelect.value === 'area_manager';
+        singleStoreField.style.display = isArea ? 'none' : 'block';
+        multiStoreField.style.display = isArea ? 'block' : 'none';
+    };
+
+    roleSelect.addEventListener('change', syncRoleFields);
+    syncRoleFields();
 
     document.getElementById('modalEmployeeForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+
         const name = document.getElementById('empName').value.trim();
         const email = document.getElementById('empEmail').value.trim();
         const password = document.getElementById('empPass').value;
         const role = roleSelect.value;
-        const storeId = role === 'area_manager' ? null : document.getElementById('empStore').value;
 
         if (STATE.users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
             alert('This email address is already registered.');
             return;
+        }
+
+        let storeId = null;
+        let storeIds = null;
+
+        if (role === 'area_manager') {
+            storeIds = Array.from(document.querySelectorAll('.emp-area-store:checked')).map(el => el.value);
+            if (!storeIds.length) {
+                alert('Please select at least one store for the area manager.');
+                return;
+            }
+        } else {
+            storeId = document.getElementById('empStore').value;
         }
 
         const newEmp = {
@@ -518,7 +630,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
             password,
             role,
             storeId,
-            storeIds: role === 'area_manager' ? [] : null,
+            storeIds,
             active: true
         };
 
@@ -577,7 +689,18 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
         const lng = parseFloat(document.getElementById('storeLng').value);
 
         const storeId = `st_${uidGenerator()}`;
-        const newStore = { id: storeId, name, address, lat, lng };
+        const newStore = {
+            id: storeId,
+            name,
+            address,
+            lat,
+            lng,
+            // sensible defaults; owner can edit later
+            shift1Start: '09:30',
+            shift1End: '18:00',
+            shift2Start: '13:00',
+            shift2End: '21:30'
+        };
 
         STATE.stores.push(newStore);
 
@@ -597,6 +720,14 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
     const storeField = storeChoices.length
         ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>`
         : '';
+    const shiftField = `
+  <div class="field">
+    <label>Shift</label>
+    <select id="manualShift">
+      <option value="1" selected>Shift 1</option>
+      <option value="2">Shift 2</option>
+    </select>
+  </div>`;
     const content = `
     <h3>Request Manual Punch-In</h3>
     <p style="font-size:12.5px;color:var(--text-soft);margin:8px 0 14px;">
@@ -605,6 +736,7 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
     </p>
     <form id="manualPunchForm">
       ${storeField}
+      ${shiftField}
       <div class="field"><label>Arrival time (today)</label><input type="time" id="manualTime" required></div>
       <div class="field"><label>Reason for missing punch-in</label><textarea id="manualReason" rows="2" required placeholder="e.g. Phone battery died, GPS not working…"></textarea></div>
       <div class="modal-actions">
@@ -624,6 +756,8 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
         const reason = document.getElementById('manualReason').value.trim();
         const storeSel = document.getElementById('manualStore');
         const storeId = storeSel ? storeSel.value : u.storeId;
+        const shiftSel = document.getElementById('manualShift');
+        const shiftNumber = shiftSel ? (parseInt(shiftSel.value, 10) === 2 ? 2 : 1) : 1;
         if (!timeVal || !reason) return;
         if (!storeId) { alert('Select a store for the manual punch-in.'); return; }
 
@@ -635,6 +769,7 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
         const { localDateStr, isLateAt } = await import('./helpers.js');
         const { persistAttendance } = await import('./services.js');
         const date = localDateStr(now);
+        const store = STATE.stores.find(s => s.id === storeId);
 
         // Replace any rejected request for today so a fresh one can be raised.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
@@ -643,13 +778,243 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
             id: uidGenerator(), userId: u.id, storeId, date,
             checkInTime: dt.toISOString(), checkInLoc: null,
             checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
-            late: isLateAt(dt), manual: true, manualReason: reason,
+            shift: shiftNumber, late: isLateAt(dt, store, shiftNumber), manual: true, manualReason: reason,
             approvalStatus: 'pending', requestedAt: now.toISOString(), decidedBy: null, decidedAt: null
         });
 
         await persistAttendance();
         closeModal();
         showToast('Manual punch-in submitted for approval.');
+        triggerRender();
+    });
+}
+
+export function editEmployeeModal(userId, triggerRender, showToast) {
+    const emp = STATE.users.find(u => u.id === userId);
+    if (!emp) return;
+
+    const singleStoreOptions = STATE.stores.map(s =>
+        `<option value="${s.id}" ${emp.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`
+    ).join('');
+
+    const selectedAreaStores = new Set(emp.storeIds || []);
+    const multiStoreOptions = STATE.stores.map(s => `
+      <label class="multi-check-row">
+        <input
+          type="checkbox"
+          class="edit-emp-area-store"
+          value="${s.id}"
+          ${selectedAreaStores.has(s.id) ? 'checked' : ''}
+        >
+        <span>${esc(s.name)}</span>
+      </label>
+    `).join('');
+
+    const roleOptions = [
+        ['sales_staff', 'Sales Staff'],
+        ['store_manager', 'Store Manager'],
+        ['area_manager', 'Area Manager']
+    ].map(([value, label]) =>
+        `<option value="${value}" ${emp.role === value ? 'selected' : ''}>${label}</option>`
+    ).join('');
+
+    const content = `
+      <div class="modal-head">
+        <h3>Edit Employee</h3>
+        <button type="button" class="icon-close" id="closeModalBtn" aria-label="Close">✕</button>
+      </div>
+
+      <form id="editEmployeeForm" class="stack-form">
+        <div class="field"><label>Full Name</label><input type="text" id="editEmpName" value="${esc(emp.name)}" required></div>
+        <div class="field"><label>Email Address</label><input type="email" id="editEmpEmail" value="${esc(emp.email)}" required></div>
+
+        <div class="field">
+          <label>Role</label>
+          <select id="editEmpRole">
+            ${roleOptions}
+          </select>
+        </div>
+
+        <div class="field" id="editSingleStoreField" style="${emp.role === 'area_manager' ? 'display:none;' : ''}">
+          <label>Assigned Store</label>
+          <select id="editEmpStore">
+            ${singleStoreOptions}
+          </select>
+        </div>
+
+        <div class="field" id="editMultiStoreField" style="${emp.role === 'area_manager' ? '' : 'display:none;'}">
+          <label>Managed Stores</label>
+          <div class="multi-check-list">
+            ${multiStoreOptions || '<div class="empty-note">No stores available.</div>'}
+          </div>
+          <div class="field-note">Select one or more stores for this area manager.</div>
+        </div>
+
+        <div class="field">
+          <label>Status</label>
+          <select id="editEmpStatus">
+            <option value="active" ${emp.active === false ? '' : 'selected'}>Active</option>
+            <option value="inactive" ${emp.active === false ? 'selected' : ''}>Inactive</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Reset Password</label>
+          <input type="text" id="editEmpPass" placeholder="Leave blank to keep current password">
+          <div class="field-note">Only fill this if you want to change the password.</div>
+        </div>
+
+        <div class="modal-actions mobile-actions">
+          <button type="submit" class="btn btn-primary btn-block">Save Changes</button>
+          <button type="button" class="btn btn-ghost btn-block" id="cancelEmployeeEditBtn">Cancel</button>
+        </div>
+      </form>
+    `;
+
+    openModal(content);
+
+    const closeBtn = document.getElementById('closeModalBtn');
+    const cancelBtn = document.getElementById('cancelEmployeeEditBtn');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+
+    const roleEl = document.getElementById('editEmpRole');
+    const singleStoreField = document.getElementById('editSingleStoreField');
+    const multiStoreField = document.getElementById('editMultiStoreField');
+
+    const syncRoleFields = () => {
+        const isArea = roleEl.value === 'area_manager';
+        singleStoreField.style.display = isArea ? 'none' : 'block';
+        multiStoreField.style.display = isArea ? 'block' : 'none';
+    };
+
+    roleEl.addEventListener('change', syncRoleFields);
+    syncRoleFields();
+
+    document.getElementById('editEmployeeForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const name = document.getElementById('editEmpName').value.trim();
+        const email = document.getElementById('editEmpEmail').value.trim();
+        const role = roleEl.value;
+        const status = document.getElementById('editEmpStatus').value;
+        const newPassword = document.getElementById('editEmpPass').value.trim();
+
+        const duplicate = STATE.users.find(u =>
+            u.id !== emp.id && u.email.toLowerCase() === email.toLowerCase()
+        );
+        if (duplicate) {
+            alert('This email address is already registered.');
+            return;
+        }
+
+        emp.name = name;
+        emp.email = email;
+        emp.role = role;
+        emp.active = status === 'active';
+
+        if (role === 'area_manager') {
+            const storeIds = Array.from(document.querySelectorAll('.edit-emp-area-store:checked')).map(el => el.value);
+            if (!storeIds.length) {
+                alert('Please select at least one store for the area manager.');
+                return;
+            }
+            emp.storeId = null;
+            emp.storeIds = storeIds;
+        } else {
+            emp.storeId = document.getElementById('editEmpStore').value;
+            emp.storeIds = null;
+        }
+
+        if (newPassword) {
+            emp.password = newPassword;
+        }
+
+        const { persistUsers } = await import('./services.js');
+        await persistUsers();
+
+        closeModal();
+        showToast('Employee updated successfully.');
+        triggerRender();
+    });
+}
+
+export function editStoreModal(storeId, triggerRender, showToast, getGeoLocation) {
+    const store = STATE.stores.find(s => s.id === storeId);
+    if (!store) return;
+
+    const content = `
+      <div class="modal-head">
+        <h3>Edit Store</h3>
+        <button type="button" class="icon-close" id="closeModalBtn" aria-label="Close">✕</button>
+      </div>
+
+      <form id="editStoreForm" class="stack-form">
+        <div class="field"><label>Store Name</label><input type="text" id="editStoreName" value="${esc(store.name)}" required></div>
+        <div class="field"><label>Address</label><input type="text" id="editStoreAddress" value="${esc(store.address || '')}" required></div>
+
+        <div class="two-col mobile-two-col">
+          <div class="field"><label>Latitude</label><input type="number" step="any" id="editStoreLat" value="${store.lat}" required></div>
+          <div class="field"><label>Longitude</label><input type="number" step="any" id="editStoreLng" value="${store.lng}" required></div>
+        </div>
+
+        <button type="button" class="btn btn-ghost btn-block" id="fetchGeoBtn" style="margin-bottom:12px;">📍 Update from current location</button>
+
+        <div class="section-title" style="margin:8px 0 10px;">Shift timings</div>
+        <div class="two-col mobile-two-col">
+          <div class="field"><label>Shift 1 Start</label><input type="time" id="editShift1Start" value="${store.shift1Start || '09:30'}" required></div>
+          <div class="field"><label>Shift 1 End</label><input type="time" id="editShift1End" value="${store.shift1End || '18:00'}" required></div>
+        </div>
+        <div class="two-col mobile-two-col">
+          <div class="field"><label>Shift 2 Start</label><input type="time" id="editShift2Start" value="${store.shift2Start || '13:00'}" required></div>
+          <div class="field"><label>Shift 2 End</label><input type="time" id="editShift2End" value="${store.shift2End || '21:30'}" required></div>
+        </div>
+
+        <div class="modal-actions mobile-actions">
+          <button type="submit" class="btn btn-primary btn-block">Save Changes</button>
+          <button type="button" class="btn btn-ghost btn-block" id="cancelStoreEditBtn">Cancel</button>
+        </div>
+      </form>
+    `;
+
+    openModal(content);
+
+    const closeBtn = document.getElementById('closeModalBtn');
+    const cancelBtn = document.getElementById('cancelStoreEditBtn');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+
+    const geoBtn = document.getElementById('fetchGeoBtn');
+    geoBtn.addEventListener('click', async () => {
+        geoBtn.textContent = 'Locating...';
+        try {
+            const pos = await getGeoLocation();
+            document.getElementById('editStoreLat').value = pos.coords.latitude;
+            document.getElementById('editStoreLng').value = pos.coords.longitude;
+            geoBtn.textContent = '📍 Location updated';
+        } catch (err) {
+            alert('Could not access location: ' + err.message);
+            geoBtn.textContent = '📍 Update from current location';
+        }
+    });
+
+    document.getElementById('editStoreForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        store.name = document.getElementById('editStoreName').value.trim();
+        store.address = document.getElementById('editStoreAddress').value.trim();
+        store.lat = parseFloat(document.getElementById('editStoreLat').value);
+        store.lng = parseFloat(document.getElementById('editStoreLng').value);
+        store.shift1Start = document.getElementById('editShift1Start').value;
+        store.shift1End = document.getElementById('editShift1End').value;
+        store.shift2Start = document.getElementById('editShift2Start').value;
+        store.shift2End = document.getElementById('editShift2End').value;
+
+        const { persistStores } = await import('./services.js');
+        await persistStores();
+
+        closeModal();
+        showToast('Store updated successfully.');
         triggerRender();
     });
 }

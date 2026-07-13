@@ -11,6 +11,7 @@ export const STATE = {
     punchStatus: '',
     punchOk: null,
     punchStoreId: null,
+    punchShift: 1,          // NEW: currently-selected shift (1 or 2)
     month: new Date(),
     navOpen: false,
     toast: null,
@@ -20,6 +21,6 @@ export const STATE = {
 };
 
 export const BACKEND_API_URL = "https://jockey-tracker.onrender.com";
-export const SHIFT_START_MIN = 9 * 60 + 30; // 9:30am
+export const SHIFT_START_MIN = 9 * 60 + 30; // keep as global fallback
 export const GRACE_MIN = 15;
 export const RADIUS_M = 100;

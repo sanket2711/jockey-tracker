@@ -1,5 +1,5 @@
 import { STATE, RADIUS_M } from './config.js';
-import { uid, todayStr, localDateStr, distanceMeters, isLateAt } from './helpers.js';
+import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes} from './helpers.js';
 import {
     loadKey, saveKey, seedData, storeIdsForUser, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
@@ -9,7 +9,8 @@ import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
-    openModal, closeModal, addEmployeeModal, addStoreModal, manualPunchModal
+    openModal, closeModal, addEmployeeModal, addStoreModal, manualPunchModal,
+    editEmployeeModal, editStoreModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -53,23 +54,43 @@ export function ensureInstancesForDate(storeIds, date) {
 
 export function monthlyReport(userId, monthDate) {
     const y = monthDate.getFullYear(), m = monthDate.getMonth();
-    const today = new Date(); const isCurrentMonth = (today.getFullYear() === y && today.getMonth() === m);
+    const today = new Date();
+    const isCurrentMonth = (today.getFullYear() === y && today.getMonth() === m);
     const lastDay = isCurrentMonth ? today.getDate() : new Date(y, m + 1, 0).getDate();
+
     let present = 0, late = 0, absent = 0, leave = 0;
+    let totalUnderMin = 0, totalOverMin = 0;
     const rows = [];
+
     for (let d = 1; d <= lastDay; d++) {
         const dt = new Date(y, m, d); const ds = localDateStr(dt);
-        // if (isSunday(ds)) continue;
         const rec = STATE.attendance.find(a => a.userId === userId && a.date === ds);
-        const onLeave = STATE.leaves.find(l => l.userId === userId && l.status === 'approved' && ds >= l.fromDate && ds <= l.toDate);
+        const onLeave = STATE.leaves.find(l =>
+            l.userId === userId && l.status === 'approved' && ds >= l.fromDate && ds <= l.toDate
+        );
+
         let status;
-        if (onLeave) { status = 'leave'; leave++; }
-        else if (isPunchPending(rec)) { status = 'pending'; }
-        else if (isPunchCountable(rec)) { status = rec.late ? 'late' : 'present'; rec.late ? late++ : present++; }
-        else { status = 'absent'; absent++; }
+        if (onLeave) {
+            status = 'leave'; leave++;
+        } else if (isPunchPending(rec)) {
+            status = 'pending';
+        } else if (isPunchCountable(rec)) {
+            status = rec.late ? 'late' : 'present';
+            rec.late ? late++ : present++;
+
+            const store = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
+            const diffMin = computeUnderOverMinutes(rec, store);
+            if (diffMin != null) {
+                if (diffMin < 0) totalUnderMin += -diffMin;
+                else totalOverMin += diffMin;
+            }
+        } else {
+            status = 'absent'; absent++;
+        }
+
         rows.push({ date: ds, status, rec: isPunchRejected(rec) ? null : rec });
     }
-    return { present, late, absent, leave, rows };
+    return { present, late, absent, leave, totalUnderMin, totalOverMin, rows };
 }
 
 function showToast(msg) {
@@ -182,6 +203,19 @@ function attachLoginEvents() {
 }
 
 function attachAppEvents() {
+    let punchStoreSel = document.getElementById('punchStore');
+    if (punchStoreSel) {
+        punchStoreSel.addEventListener('change', () => {
+            STATE.punchStoreId = punchStoreSel.value;
+        });
+    }
+
+    const punchShiftSel = document.getElementById('punchShift');   // NEW
+    if (punchShiftSel) {
+        punchShiftSel.addEventListener('change', () => {
+            STATE.punchShift = parseInt(punchShiftSel.value, 10) === 2 ? 2 : 1;
+        });
+    }
     document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => { STATE.page = el.dataset.page; STATE.punchStatus = ''; STATE.punchOk = null; render(); }));
     const menuToggleBtn = document.getElementById('menuToggleBtn');
     if (menuToggleBtn) {
@@ -212,7 +246,7 @@ function attachAppEvents() {
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
     const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
-    const punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
+    punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
 
     document.querySelectorAll('[data-punch-approve]').forEach(el => el.addEventListener('click', async () => {
         const rec = STATE.attendance.find(a => a.id === el.dataset.punchApprove); if (!rec) return;
@@ -273,13 +307,30 @@ function attachAppEvents() {
         const d = new Date(STATE.month); d.setMonth(d.getMonth() + parseInt(el.dataset.month)); STATE.month = d; render();
     }));
 
-    const addEmpBtn = document.getElementById('addEmployeeBtn'); if (addEmpBtn) addEmpBtn.addEventListener('click', () => addEmployeeModal(render, showToast, uid));
-    const addStoreBtn = document.getElementById('addStoreBtn'); if (addStoreBtn) addStoreBtn.addEventListener('click', () => addStoreModal(render, showToast, uid, geoOnce));
+    const addEmpBtn = document.getElementById('addEmployeeBtn');
+    if (addEmpBtn) addEmpBtn.addEventListener('click', () => addEmployeeModal(render, showToast, uid));
 
-    document.querySelectorAll('[data-toggleactive]').forEach(el => el.addEventListener('click', async () => {
-        const u = STATE.users.find(x => x.id === el.dataset.toggleactive); u.active = u.active === false;
-        await persistUsers(); render();
-    }));
+    const addStoreBtn = document.getElementById('addStoreBtn');
+    if (addStoreBtn) addStoreBtn.addEventListener('click', () => addStoreModal(render, showToast, uid, geoOnce));
+
+    document.querySelectorAll('[data-edituser]').forEach(el => {
+        el.addEventListener('click', () => {
+            if (!STATE.user || STATE.user.role !== 'admin') return;
+            editEmployeeModal(el.dataset.edituser, render, showToast);
+        });
+    });
+
+    document.querySelectorAll('[data-editstore]').forEach(el => {
+        el.addEventListener('click', () => {
+            if (!STATE.user || STATE.user.role !== 'admin') return;
+            editStoreModal(el.dataset.editstore, render, showToast, geoOnce);
+        });
+    });
+
+    // document.querySelectorAll('[data-toggleactive]').forEach(el => el.addEventListener('click', async () => {
+    //     const u = STATE.users.find(x => x.id === el.dataset.toggleactive); u.active = u.active === false;
+    //     await persistUsers(); render();
+    // }));
 
     // Toggle dropdowns on click
     document.querySelectorAll('[data-dropdown-toggle]').forEach(el => {
@@ -362,7 +413,7 @@ async function handlePunchIn() {
         const now = new Date(), date = localDateStr(now);
         // Clear any rejected request for today so it doesn't linger alongside the real punch.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
-        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], late: isLateAt(now) });
+        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], shift: shiftNumber, late: isLateAt(now, store, shiftNumber)  });
         await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
