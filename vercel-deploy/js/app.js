@@ -1,7 +1,7 @@
 import { STATE, RADIUS_M } from './config.js';
 import { uid, todayStr, localDateStr, distanceMeters, isLateAt } from './helpers.js';
 import {
-    loadKey, saveKey, seedData, storeIdsForUser,
+    loadKey, saveKey, seedData, storeIdsForUser, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
     persistLeaves, persistUsers, persistStores
 } from './services.js';
@@ -82,12 +82,18 @@ async function login(email, password) {
     const u = STATE.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase() && x.password === password && x.active !== false);
     if (!u) return false;
     STATE.user = u; STATE.page = 'dashboard'; STATE.navOpen = false;
+    STATE.reportFilterStoreIds = [];
+    STATE.reportFilterStaffIds = [];
+    STATE.activeDropdown = null;
     await saveKey('session', u.id, false);
     return true;
 }
 
 async function logout() {
     STATE.user = null;
+    STATE.reportFilterStoreIds = [];
+    STATE.reportFilterStaffIds = [];
+    STATE.activeDropdown = null;
     await saveKey('session', null, false);
     render();
 }
@@ -275,6 +281,64 @@ function attachAppEvents() {
         await persistUsers(); render();
     }));
 
+    // Toggle dropdowns on click
+    document.querySelectorAll('[data-dropdown-toggle]').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdownType = el.dataset.dropdownToggle; // 'store' or 'staff'
+            if (STATE.activeDropdown === dropdownType) {
+                STATE.activeDropdown = null;
+            } else {
+                STATE.activeDropdown = dropdownType;
+            }
+            render();
+        });
+    });
+
+    // Handle store checkbox click
+    document.querySelectorAll('.report-store-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.reportFilterStoreIds) STATE.reportFilterStoreIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.reportFilterStoreIds.includes(val)) {
+                    STATE.reportFilterStoreIds.push(val);
+                }
+            } else {
+                STATE.reportFilterStoreIds = STATE.reportFilterStoreIds.filter(id => id !== val);
+            }
+            // Trigger cascading clean up for staff who are no longer in scope
+            const u = STATE.user;
+            const allStaff = employeesForUser(u).filter(x => x.role === 'sales_staff' || x.role === 'store_manager');
+            const selectedStoreIds = STATE.reportFilterStoreIds;
+            const filteredStaffByStore = selectedStoreIds.length > 0
+                ? allStaff.filter(s => selectedStoreIds.includes(s.storeId))
+                : allStaff;
+            const validStaffIds = new Set(filteredStaffByStore.map(s => s.id));
+            if (STATE.reportFilterStaffIds) {
+                STATE.reportFilterStaffIds = STATE.reportFilterStaffIds.filter(sid => validStaffIds.has(sid));
+            }
+
+            render();
+        });
+    });
+
+    // Handle staff checkbox click
+    document.querySelectorAll('.report-staff-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.reportFilterStaffIds) STATE.reportFilterStaffIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.reportFilterStaffIds.includes(val)) {
+                    STATE.reportFilterStaffIds.push(val);
+                }
+            } else {
+                STATE.reportFilterStaffIds = STATE.reportFilterStaffIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+
     if (document.getElementById('liveClock')) tickClock();
 }
 
@@ -353,5 +417,12 @@ async function init() {
     STATE.ready = true;
     render();
 }
+
+document.addEventListener('click', (e) => {
+    if (STATE.activeDropdown && !e.target.closest('.multiselect-dropdown')) {
+        STATE.activeDropdown = null;
+        render();
+    }
+});
 
 init();

@@ -309,8 +309,31 @@ export function renderLeavePage() {
 
 export function renderReportsPage() {
     const u = STATE.user;
+    const allStores = storesForUser(u);
     const staff = employeesForUser(u).filter(x => x.role === 'sales_staff' || x.role === 'store_manager');
-    const summary = staff.map(s => {
+
+    // Safe initialization
+    if (!STATE.reportFilterStoreIds) STATE.reportFilterStoreIds = [];
+    if (!STATE.reportFilterStaffIds) STATE.reportFilterStaffIds = [];
+
+    const selectedStoreIds = STATE.reportFilterStoreIds;
+
+    // Filter staff list to only show staff from selected stores in the dropdown and reports
+    const filteredStaffByStore = selectedStoreIds.length > 0
+        ? staff.filter(s => selectedStoreIds.includes(s.storeId))
+        : staff;
+
+    // Clean up selected staff if they are no longer in scope due to store filter changes
+    const validStaffIds = new Set(filteredStaffByStore.map(s => s.id));
+    STATE.reportFilterStaffIds = STATE.reportFilterStaffIds.filter(sid => validStaffIds.has(sid));
+    const selectedStaffIds = STATE.reportFilterStaffIds;
+
+    // The staff members whose attendance is to be listed in the table
+    const displayStaff = selectedStaffIds.length > 0
+        ? filteredStaffByStore.filter(s => selectedStaffIds.includes(s.id))
+        : filteredStaffByStore;
+
+    const summary = displayStaff.map(s => {
         const rep = monthlyReport(s.id, STATE.month);
         const total = rep.present + rep.late + rep.absent + rep.leave;
         const pct = total ? Math.round((rep.present + rep.late) / total * 100) : 0;
@@ -318,8 +341,65 @@ export function renderReportsPage() {
       <td style="color:var(--success)">${rep.present}</td><td style="color:var(--amber-dark)">${rep.late}</td>
       <td style="color:var(--alert)">${rep.absent}</td><td style="color:var(--steel)">${rep.leave}</td><td>${pct}%</td></tr>`;
     }).join('');
+
+    // Render Store Dropdown
+    let storeBtnLabel = "All Stores";
+    if (selectedStoreIds.length > 0) {
+        storeBtnLabel = selectedStoreIds.map(storeName).filter(Boolean).join(', ');
+        if (storeBtnLabel.length > 25) {
+            storeBtnLabel = `${selectedStoreIds.length} stores selected`;
+        }
+    }
+
+    const storeOptions = allStores.map(st => {
+        const checked = selectedStoreIds.includes(st.id) ? 'checked' : '';
+        return `
+        <label class="multiselect-dropdown-item">
+            <input type="checkbox" class="report-store-checkbox" value="${st.id}" ${checked}>
+            ${esc(st.name)}
+        </label>
+        `;
+    }).join('');
+
+    // Render Staff Dropdown
+    let staffBtnLabel = "All Staff";
+    if (selectedStaffIds.length > 0) {
+        staffBtnLabel = selectedStaffIds.map(sid => {
+            const st = staff.find(x => x.id === sid);
+            return st ? st.name : '';
+        }).filter(Boolean).join(', ');
+        if (staffBtnLabel.length > 25) {
+            staffBtnLabel = `${selectedStaffIds.length} staff selected`;
+        }
+    }
+
+    const staffOptions = filteredStaffByStore.map(s => {
+        const checked = selectedStaffIds.includes(s.id) ? 'checked' : '';
+        return `
+        <label class="multiselect-dropdown-item">
+            <input type="checkbox" class="report-staff-checkbox" value="${s.id}" ${checked}>
+            ${esc(s.name)}
+        </label>
+        `;
+    }).join('');
+
     return `
   ${renderMonthPicker()}
+  <div class="filter-bar">
+      <div style="font-size:12px;color:var(--text-soft);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Filter:</div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'store' ? 'open' : ''}" id="reportStoreDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="store">${esc(storeBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">
+              ${storeOptions || '<div class="empty-note">No stores available</div>'}
+          </div>
+      </div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'staff' ? 'open' : ''}" id="reportStaffDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="staff">${esc(staffBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">
+              ${staffOptions || '<div class="empty-note">No staff in scope</div>'}
+          </div>
+      </div>
+  </div>
   <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Attendance</th></tr></thead>
   <tbody>${summary || '<tr><td colspan="6" class="empty-note">No staff in scope.</td></tr>'}</tbody></table></div>
   `;

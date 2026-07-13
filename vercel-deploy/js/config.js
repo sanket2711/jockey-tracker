@@ -13,7 +13,10 @@ export const STATE = {
     punchStoreId: null,
     month: new Date(),
     navOpen: false,
-    toast: null
+    toast: null,
+    reportFilterStoreIds: [],
+    reportFilterStaffIds: [],
+    activeDropdown: null
 };
 
 export const BACKEND_API_URL = "https://jockey-tracker.onrender.com";
