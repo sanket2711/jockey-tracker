@@ -108,7 +108,7 @@ export function seedData() {
     });
     const taskTitles = ['Open store & switch on lights', 'Clean & organize shelves', 'Check & log stock levels', 'Update daily sales register', 'Close store & lock up'];
     const taskTemplates = [];
-    stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true }); }); });
+    stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true, assignedTo: null, recurrence: { type: 'daily' } }); }); });
     return { stores, users, taskTemplates };
 }
 
