@@ -1,15 +1,12 @@
-import { STATE } from './config.js';
-import { esc, fmtTime, fmtDate, fmtDateShort, roleLabel } from './helpers.js';
-import { storeName, userName, storesForUser, storeIdsForUser, employeesForUser } from './services.js';
-import { todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected } from './app.js';
+import {STATE} from './config.js';
+import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel} from './helpers.js';
+import {storeName, userName, storesForUser, storeIdsForUser, employeesForUser} from './services.js';
+import {
+    todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
+} from './app.js';
 
 export function renderLogin() {
-    const demo = [
-        ['Admin / Owner', 'admin@storeflow.demo', 'admin123'],
-        ['Area Manager', 'rohan.area@storeflow.demo', 'area123'],
-        ['Store Manager', 'vikram.manager@storeflow.demo', 'manager123'],
-        ['Sales Staff', 'staff1@storeflow.demo', 'staff123'],
-    ];
+    const demo = [['Admin / Owner', 'admin@storeflow.demo', 'admin123'], ['Area Manager', 'rohan.area@storeflow.demo', 'area123'], ['Store Manager', 'vikram.manager@storeflow.demo', 'manager123'], ['Sales Staff', 'staff1@storeflow.demo', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
@@ -35,11 +32,24 @@ export function renderLogin() {
 export function navItemsFor(role) {
     const base = [['dashboard', 'Dashboard'], ['attendance', 'Attendance'], ['tasks', 'Tasks'], ['leave', 'Leave']];
     if (role !== 'sales_staff') base.push(['reports', 'Reports']);
-    if (role === 'admin') { base.push(['team', 'Team']); base.push(['stores', 'Stores']); }
+    if (role === 'admin') {
+        base.push(['team', 'Team']);
+        base.push(['stores', 'Stores']);
+    }
     return base;
 }
 
-export function pageTitle(p) { return { dashboard: 'Dashboard', attendance: 'Attendance', tasks: 'Daily Tasks', leave: 'Leave', reports: 'Reports', team: 'Team', stores: 'Stores' }[p] || ''; }
+export function pageTitle(p) {
+    return {
+        dashboard: 'Dashboard',
+        attendance: 'Attendance',
+        tasks: 'Daily Tasks',
+        leave: 'Leave',
+        reports: 'Reports',
+        team: 'Team',
+        stores: 'Stores'
+    }[p] || '';
+}
 
 export function pageSubtitle(u) {
     if (u.role === 'admin') return 'All 4 stores';
@@ -52,9 +62,7 @@ export function renderPunchWidget() {
     const rec = todayRecordFor(u.id);
     // Stores this user can punch against: single-store staff/managers use their assigned store;
     // area managers choose from the stores they oversee. Anyone else (e.g. owner) gets no widget.
-    const punchStores = u.storeId
-        ? STATE.stores.filter(s => s.id === u.storeId)
-        : (u.role === 'area_manager' ? storesForUser(u) : []);
+    const punchStores = u.storeId ? STATE.stores.filter(s => s.id === u.storeId) : (u.role === 'area_manager' ? storesForUser(u) : []);
     if (!punchStores.length) return '';
     // Once punched (or pending), the store is locked to that record; otherwise honor the picker.
     const savedId = STATE.punchStoreId && punchStores.some(s => s.id === STATE.punchStoreId) ? STATE.punchStoreId : null;
@@ -62,26 +70,30 @@ export function renderPunchWidget() {
     const store = STATE.stores.find(s => s.id === activeStoreId);
     // Show the picker for store-less users (area managers) until they've punched for the day.
     const showPicker = !rec && !u.storeId;
-    const storeLine = showPicker
-        ? `<select class="punch-store-select" id="punchStore">${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
-       <div class="punch-store">within ${RADIUS_M}m of the selected store</div>`
-        : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
+    const storeLine = showPicker ? `<select class="punch-store-select" id="punchStore">${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+       <div class="punch-store">within ${RADIUS_M}m of the selected store</div>` : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
     const now = new Date();
     let shiftSelectorHtml = '';
     if (!rec && store) {
         const s1 = `${store.shift1Start || '—'} – ${store.shift1End || '—'}`;
         const s2 = `${store.shift2Start || '—'} – ${store.shift2End || '—'}`;
-        const activeShift = STATE.punchShift === 2 ? 2 : 1;
         shiftSelectorHtml = `
-      <div class="punch-shift-row">
-        <label class="punch-shift-label">Shift</label>
-        <select id="punchShift" class="punch-shift-select">
-          <option value="1" ${activeShift === 1 ? 'selected' : ''}>Shift 1 (${s1})</option>
-          <option value="2" ${activeShift === 2 ? 'selected' : ''}>Shift 2 (${s2})</option>
-        </select>
+       <div class="punch-shift-row">
+       <div class="punch-shift-label">Shift</div>
+        <div class="punch-shift-radio-group" role="radiogroup" aria-label="Select shift">
+                      <label class="punch-shift-radio">
+                        <input type="radio" name="punchShift" value="1" ${STATE.punchShift === 1 ? 'checked' : ''}>
+                        <span>Shift 1 <small>(${s1})</small></span>
+                      </label>
+                      <label class="punch-shift-radio">
+                        <input type="radio" name="punchShift" value="2" ${STATE.punchShift === 2 ? 'checked' : ''}>
+                        <span>Shift 2 <small>(${s2})</small></span>
+                      </label>
+                    </div>
       </div>`;
     }
-    let btnHtml, statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
+    let btnHtml,
+        statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
     const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
     if (isPunchPending(rec)) {
         // Manual punch-in submitted and awaiting a manager's decision.
@@ -98,14 +110,14 @@ export function renderPunchWidget() {
 
     const outCount = rec && Array.isArray(rec.checkOutHistory) ? rec.checkOutHistory.length : 0;
     let statusVal = '—';
-    if (isPunchPending(rec)) statusVal = '<span class="pill pill-pending">Pending approval</span>';
-    else if (isPunchRejected(rec)) statusVal = '<span class="pill pill-rejected">Rejected</span>';
-    else if (isPunchCountable(rec)) statusVal = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>';
+    if (isPunchPending(rec)) statusVal = '<span class="pill pill-pending">Pending approval</span>'; else if (isPunchRejected(rec)) statusVal = '<span class="pill pill-rejected">Rejected</span>'; else if (isPunchCountable(rec)) statusVal = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>';
 
     return `
   <div class="punch-wrap">
     <div class="punch-card">
-      <div class="punch-time mono">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+      <div class="punch-time mono">${now.toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    })}</div>
       <div class="punch-date">${fmtDate(todayStr())}</div>
       ${storeLine}
       ${shiftSelectorHtml}
@@ -147,7 +159,7 @@ export function renderLeaveTable(list, showActions) {
 }
 
 export function renderMonthPicker() {
-    const label = STATE.month.toLocaleDateString([], { month: 'long', year: 'numeric' });
+    const label = STATE.month.toLocaleDateString([], {month: 'long', year: 'numeric'});
     return `<div class="section-title">Monthly Report<span class="month-switch"><button data-month="-1">‹</button><span>${label}</span><button data-month="1">›</button></span></div>`;
 }
 
@@ -231,8 +243,7 @@ export function renderAttendancePage() {
         const rec = STATE.attendance.find(a => a.userId === s.id && a.date === today);
         const show = rec && !isPunchRejected(rec);
         let pill = '<span class="pill pill-absent">Absent</span>';
-        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
-        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>'; else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
         return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${esc(storeName(s.storeId))}</td>
       <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr>`;
     }).join('');
@@ -334,9 +345,7 @@ export function renderReportsPage() {
     const selectedStoreIds = STATE.reportFilterStoreIds;
 
     // Filter staff list to only show staff from selected stores in the dropdown and reports
-    const filteredStaffByStore = selectedStoreIds.length > 0
-        ? staff.filter(s => selectedStoreIds.includes(s.storeId))
-        : staff;
+    const filteredStaffByStore = selectedStoreIds.length > 0 ? staff.filter(s => selectedStoreIds.includes(s.storeId)) : staff;
 
     // Clean up selected staff if they are no longer in scope due to store filter changes
     const validStaffIds = new Set(filteredStaffByStore.map(s => s.id));
@@ -344,14 +353,12 @@ export function renderReportsPage() {
     const selectedStaffIds = STATE.reportFilterStaffIds;
 
     // The staff members whose attendance is to be listed in the table
-    const displayStaff = selectedStaffIds.length > 0
-        ? filteredStaffByStore.filter(s => selectedStaffIds.includes(s.id))
-        : filteredStaffByStore;
+    const displayStaff = selectedStaffIds.length > 0 ? filteredStaffByStore.filter(s => selectedStaffIds.includes(s.id)) : filteredStaffByStore;
 
     const summary = displayStaff.map(s => {
         const rep = monthlyReport(s.id, STATE.month);
         const total = rep.present + rep.late + rep.absent + rep.leave;
-        const pct = total ? Math.round((rep.present + rep.late) / total * 100) : 0;
+        // const pct = total ? Math.round((rep.present + rep.late) / total * 100) : 0;
 
         const netMin = (rep.totalOverMin || 0) - (rep.totalUnderMin || 0);
         const netHours = (netMin / 60).toFixed(1);
@@ -367,7 +374,6 @@ export function renderReportsPage() {
       <td style="color:var(--alert)">${rep.absent}</td>
       <td style="color:var(--steel)">${rep.leave}</td>
       <td>${netLabel}</td>
-      <td>${pct}%</td>
     </tr>`;
     }).join('');
 
@@ -429,7 +435,7 @@ export function renderReportsPage() {
           </div>
       </div>
   </div>
-  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Under/Overtime</th><th>Attendance</th></tr></thead>
+  <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th><th>Under/Overtime</th></tr></thead>
   <tbody>${summary || '<tr><td colspan="6" class="empty-note">No staff in scope.</td></tr>'}</tbody></table></div>
   `;
 }
@@ -444,12 +450,8 @@ export function renderTeamPage() {
             <div class="badge-role">${esc(u.email)}</div>
           </td>
           <td>${esc(roleLabel(u.role))}</td>
-          <td>${u.role === 'area_manager'
-            ? (u.storeIds || []).map(storeName).join(', ') || '—'
-            : esc(storeName(u.storeId))}</td>
-          <td>${u.active === false
-            ? '<span class="pill pill-absent">Inactive</span>'
-            : '<span class="pill pill-present">Active</span>'}</td>
+          <td>${u.role === 'area_manager' ? (u.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u.storeId))}</td>
+          <td>${u.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
           <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u.id}">Edit</button></td>
         </tr>`).join('');
 
@@ -624,19 +626,12 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
         }
 
         const newEmp = {
-            id: `u_staff_${uidGenerator()}`,
-            name,
-            email,
-            password,
-            role,
-            storeId,
-            storeIds,
-            active: true
+            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true
         };
 
         STATE.users.push(newEmp);
 
-        const { persistUsers } = await import('./services.js');
+        const {persistUsers} = await import('./services.js');
         await persistUsers();
 
         closeModal();
@@ -690,21 +685,13 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
 
         const storeId = `st_${uidGenerator()}`;
         const newStore = {
-            id: storeId,
-            name,
-            address,
-            lat,
-            lng,
-            // sensible defaults; owner can edit later
-            shift1Start: '09:30',
-            shift1End: '18:00',
-            shift2Start: '13:00',
-            shift2End: '21:30'
+            id: storeId, name, address, lat, lng, // sensible defaults; owner can edit later
+            shift1Start: '10:30', shift1End: '20:30', shift2Start: '12:00', shift2End: '22:00'
         };
 
         STATE.stores.push(newStore);
 
-        const { persistStores } = await import('./services.js');
+        const {persistStores} = await import('./services.js');
         await persistStores();
 
         closeModal();
@@ -717,17 +704,14 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
     const u = STATE.user;
     // Area managers (no fixed store) choose which store the missed punch was at.
     const storeChoices = u.storeId ? [] : (u.role === 'area_manager' ? storesForUser(u) : []);
-    const storeField = storeChoices.length
-        ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>`
-        : '';
-    const shiftField = `
-  <div class="field">
-    <label>Shift</label>
-    <select id="manualShift">
-      <option value="1" selected>Shift 1</option>
-      <option value="2">Shift 2</option>
-    </select>
-  </div>`;
+    const storeField = storeChoices.length ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>` : '';
+    const shiftField = `<div class="field" ><label for="manualShift">Shift</label>
+        <select id="manualShift" required>
+          <option value="" disabled selected>Select a shift</option>
+          <option value="1">Shift 1</option>
+          <option value="2">Shift 2</option>
+        </select>
+      </div>`;
     const content = `
     <h3>Request Manual Punch-In</h3>
     <p style="font-size:12.5px;color:var(--text-soft);margin:8px 0 14px;">
@@ -759,15 +743,25 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
         const shiftSel = document.getElementById('manualShift');
         const shiftNumber = shiftSel ? (parseInt(shiftSel.value, 10) === 2 ? 2 : 1) : 1;
         if (!timeVal || !reason) return;
-        if (!storeId) { alert('Select a store for the manual punch-in.'); return; }
+        if (!shiftSel) {
+            alert('select a shift for the manual punch-in');
+            return;
+        }
+        if (!storeId) {
+            alert('Select a store for the manual punch-in.');
+            return;
+        }
 
         const now = new Date();
         const [hh, mm] = timeVal.split(':').map(Number);
         const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
-        if (dt.getTime() > now.getTime()) { alert('Arrival time cannot be in the future.'); return; }
+        if (dt.getTime() > now.getTime()) {
+            alert('Arrival time cannot be in the future.');
+            return;
+        }
 
-        const { localDateStr, isLateAt } = await import('./helpers.js');
-        const { persistAttendance } = await import('./services.js');
+        const {localDateStr, isLateAt} = await import('./helpers.js');
+        const {persistAttendance} = await import('./services.js');
         const date = localDateStr(now);
         const store = STATE.stores.find(s => s.id === storeId);
 
@@ -775,11 +769,23 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
 
         STATE.attendance.push({
-            id: uidGenerator(), userId: u.id, storeId, date,
-            checkInTime: dt.toISOString(), checkInLoc: null,
-            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
-            shift: shiftNumber, late: isLateAt(dt, store, shiftNumber), manual: true, manualReason: reason,
-            approvalStatus: 'pending', requestedAt: now.toISOString(), decidedBy: null, decidedAt: null
+            id: uidGenerator(),
+            userId: u.id,
+            storeId,
+            date,
+            checkInTime: dt.toISOString(),
+            checkInLoc: null,
+            checkOutTime: null,
+            checkOutLoc: null,
+            checkOutHistory: [],
+            shift: shiftNumber,
+            late: isLateAt(dt, store, shiftNumber),
+            manual: true,
+            manualReason: reason,
+            approvalStatus: 'pending',
+            requestedAt: now.toISOString(),
+            decidedBy: null,
+            decidedAt: null
         });
 
         await persistAttendance();
@@ -793,9 +799,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
     const emp = STATE.users.find(u => u.id === userId);
     if (!emp) return;
 
-    const singleStoreOptions = STATE.stores.map(s =>
-        `<option value="${s.id}" ${emp.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`
-    ).join('');
+    const singleStoreOptions = STATE.stores.map(s => `<option value="${s.id}" ${emp.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
 
     const selectedAreaStores = new Set(emp.storeIds || []);
     const multiStoreOptions = STATE.stores.map(s => `
@@ -810,13 +814,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
       </label>
     `).join('');
 
-    const roleOptions = [
-        ['sales_staff', 'Sales Staff'],
-        ['store_manager', 'Store Manager'],
-        ['area_manager', 'Area Manager']
-    ].map(([value, label]) =>
-        `<option value="${value}" ${emp.role === value ? 'selected' : ''}>${label}</option>`
-    ).join('');
+    const roleOptions = [['sales_staff', 'Sales Staff'], ['store_manager', 'Store Manager'], ['area_manager', 'Area Manager']].map(([value, label]) => `<option value="${value}" ${emp.role === value ? 'selected' : ''}>${label}</option>`).join('');
 
     const content = `
       <div class="modal-head">
@@ -826,29 +824,16 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
 
       <form id="editEmployeeForm" class="stack-form">
         <div class="field"><label>Full Name</label><input type="text" id="editEmpName" value="${esc(emp.name)}" required></div>
-        <div class="field"><label>Email Address</label><input type="email" id="editEmpEmail" value="${esc(emp.email)}" required></div>
-
-        <div class="field">
-          <label>Role</label>
-          <select id="editEmpRole">
-            ${roleOptions}
-          </select>
-        </div>
-
+        <div class="field"><label>Email Address</label><input type="email" id="editEmpEmail" value="${esc(emp.email)}" required disabled></div>
+        <div class="field"><label>Role</label><select id="editEmpRole">${roleOptions}</select></div>
         <div class="field" id="editSingleStoreField" style="${emp.role === 'area_manager' ? 'display:none;' : ''}">
-          <label>Assigned Store</label>
-          <select id="editEmpStore">
-            ${singleStoreOptions}
-          </select>
+          <label>Assigned Store</label><select id="editEmpStore">${singleStoreOptions}</select>
         </div>
-
         <div class="field" id="editMultiStoreField" style="${emp.role === 'area_manager' ? '' : 'display:none;'}">
           <label>Managed Stores</label>
           <div class="multi-check-list">
             ${multiStoreOptions || '<div class="empty-note">No stores available.</div>'}
-          </div>
-          <div class="field-note">Select one or more stores for this area manager.</div>
-        </div>
+          </div></div>
 
         <div class="field">
           <label>Status</label>
@@ -900,9 +885,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
         const status = document.getElementById('editEmpStatus').value;
         const newPassword = document.getElementById('editEmpPass').value.trim();
 
-        const duplicate = STATE.users.find(u =>
-            u.id !== emp.id && u.email.toLowerCase() === email.toLowerCase()
-        );
+        const duplicate = STATE.users.find(u => u.id !== emp.id && u.email.toLowerCase() === email.toLowerCase());
         if (duplicate) {
             alert('This email address is already registered.');
             return;
@@ -930,7 +913,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
             emp.password = newPassword;
         }
 
-        const { persistUsers } = await import('./services.js');
+        const {persistUsers} = await import('./services.js');
         await persistUsers();
 
         closeModal();
@@ -1010,7 +993,7 @@ export function editStoreModal(storeId, triggerRender, showToast, getGeoLocation
         store.shift2Start = document.getElementById('editShift2Start').value;
         store.shift2End = document.getElementById('editShift2End').value;
 
-        const { persistStores } = await import('./services.js');
+        const {persistStores} = await import('./services.js');
         await persistStores();
 
         closeModal();

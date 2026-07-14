@@ -1,15 +1,15 @@
 import { STATE, RADIUS_M } from './config.js';
 import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes} from './helpers.js';
 import {
-    loadKey, saveKey, seedData, storeIdsForUser, employeesForUser,
+    loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores
+    persistLeaves
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
-    openModal, closeModal, addEmployeeModal, addStoreModal, manualPunchModal,
+    addEmployeeModal, addStoreModal, manualPunchModal,
     editEmployeeModal, editStoreModal
 } from './views.js';
 
@@ -210,12 +210,12 @@ function attachAppEvents() {
         });
     }
 
-    const punchShiftSel = document.getElementById('punchShift');   // NEW
-    if (punchShiftSel) {
-        punchShiftSel.addEventListener('change', () => {
-            STATE.punchShift = parseInt(punchShiftSel.value, 10) === 2 ? 2 : 1;
-        });
-    }
+    // Shift radio buttons: no default is pre-selected, user must explicitly choose one
+        document.querySelectorAll('input[name="punchShift"]').forEach(radio => {
+                radio.addEventListener('change', () => {
+                        STATE.punchShift = parseInt(radio.value, 10) === 2 ? 2 : 1;
+                    });
+            });
     document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => { STATE.page = el.dataset.page; STATE.punchStatus = ''; STATE.punchOk = null; render(); }));
     const menuToggleBtn = document.getElementById('menuToggleBtn');
     if (menuToggleBtn) {
@@ -405,6 +405,9 @@ async function handlePunchIn() {
     const storeId = sel ? sel.value : u.storeId;
     const store = STATE.stores.find(s => s.id === storeId);
     if (!store) { STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.'; STATE.punchOk = false; render(); return; }
+    // No default shift is pre-selected — the user must explicitly pick Shift 1 or Shift 2.
+    const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
+    if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
         const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
@@ -413,8 +416,9 @@ async function handlePunchIn() {
         const now = new Date(), date = localDateStr(now);
         // Clear any rejected request for today so it doesn't linger alongside the real punch.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
+        const shiftNumber = STATE.punchShift;
         STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], shift: shiftNumber, late: isLateAt(now, store, shiftNumber)  });
-        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; render();
+        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; STATE.punchShift = null; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
 

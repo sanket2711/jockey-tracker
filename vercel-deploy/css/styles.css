@@ -178,6 +178,18 @@ tr:last-child td{border-bottom:none;}
 .punch-link{margin-top:14px;background:none;border:none;color:var(--amber);font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;font-family:'Inter',sans-serif;}
 .punch-link:hover{color:#fff;}
 .punch-store-select{margin-top:14px;width:100%;max-width:240px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:#fff;font-family:'Inter',sans-serif;font-size:13.5px;cursor:pointer;}
+.punch-shift-row{margin-top:16px;width:100%;max-width:280px;}
+.punch-shift-label{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:rgba(255,255,255,0.6);font-weight:600;margin-bottom:8px;}
+.punch-shift-radio-group{display:flex;flex-direction:column;gap:8px;}
+.punch-shift-radio{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;min-height:44px;
+    border:1.5px solid rgba(255,255,255,0.25);border-radius:8px;background:rgba(255,255,255,0.06);
+    color:#fff;font-size:13.5px;cursor:pointer;transition:border-color .15s ease,background .15s ease;
+}
+.punch-shift-radio:hover{border-color:rgba(255,255,255,0.5);}
+.punch-shift-radio input[type="radio"]{width:18px;height:18px;accent-color:var(--amber);flex:none;cursor:pointer;}
+.punch-shift-radio:has(input:checked){border-color:var(--amber);background:rgba(215,25,32,0.18);}
+.punch-shift-radio small{color:rgba(255,255,255,0.55);font-weight:400;}
 .punch-store-select:focus{outline:none;border-color:var(--amber);}
 .punch-store-select option{color:var(--ink);}
 .text-faint{color:var(--text-faint);}
@@ -540,23 +552,55 @@ tr:last-child td{border-bottom:none;}
 
 .multi-check-row {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
+    align-items: center;   /* ensures vertical centering */
+    gap: 8px;              /* slightly tighter spacing */
+    padding: 8px 10px;     /* smaller padding for compact look */
     border: 1.5px solid var(--line);
-    border-radius: 10px;
+    border-radius: 8px;
     background: #fbfbfc;
-    min-height: 48px;
+    min-height: 32px;      /* enough height for checkbox + text */
 }
 
 .multi-check-row input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
+    width: 14px;           /* smaller box */
+    height: 14px;
     accent-color: var(--ink);
-    flex: none;
+    margin: 0;             /* removes extra spacing */
+    vertical-align: middle;/* aligns with text baseline */
 }
 
 .multi-check-row span {
     font-size: 14px;
+    line-height: 1.2;      /* keeps text aligned with checkbox */
+    color: var(--text);
+}
+.multi-check-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.multi-check-row {
+    display: flex;
+    align-items: center;   /* ensures vertical centering */
+    gap: 8px;              /* slightly tighter spacing */
+    padding: 3px 5px;     /* smaller padding for compact look */
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    background: #fbfbfc;
+    min-height: 32px;      /* enough height for checkbox + text */
+}
+
+.multi-check-row input[type="checkbox"] {
+    width: 14px;           /* smaller box */
+    height: 14px;
+    accent-color: var(--ink);
+    margin: 0;             /* removes extra spacing */
+    vertical-align: middle;/* aligns with text baseline */
+}
+
+.multi-check-row span {
+    font-size: 14px;
+    line-height: 1.2;      /* keeps text aligned with checkbox */
     color: var(--text);
 }

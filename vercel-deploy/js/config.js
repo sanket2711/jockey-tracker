@@ -11,7 +11,7 @@ export const STATE = {
     punchStatus: '',
     punchOk: null,
     punchStoreId: null,
-    punchShift: 1,          // NEW: currently-selected shift (1 or 2)
+    punchShift: null,          // NEW: currently-selected shift (1 or 2)
     month: new Date(),
     navOpen: false,
     toast: null,
