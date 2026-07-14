@@ -474,8 +474,8 @@ async function init() {
         btnCreateTask.addEventListener('click', () => createTaskModal(render, showToast, uid, persistTemplates, ensureInstancesForDate, todayStr));
     }
     let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
-        loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
-        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
+        loadKey('stores', false), loadKey('users', false), loadKey('task_templates', false),
+        loadKey('attendance', false), loadKey('task_instances', false), loadKey('leaves', false)
     ]);
     if (!stores || !users) {
         const seed = seedData();
