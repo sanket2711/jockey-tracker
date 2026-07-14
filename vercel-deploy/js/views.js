@@ -261,34 +261,58 @@ export function renderAttendancePage() {
 
 export function renderTasksPage() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
-    const canManage = u.role === 'store_manager' || u.role === 'admin';
+    const canManage = ['store_manager', 'area_manager', 'admin'].includes(u.role);
     let html = '';
+
+    if (canManage) {
+        html += `<div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+            <button class="btn btn-primary" id="btnCreateTask">Create Task</button>
+        </div>`;
+    }
+
     storesForUser(u).forEach(s => {
         const tasks = STATE.taskInstances.filter(t => t.storeId === s.id && t.date === today);
         const done = tasks.filter(t => t.completed).length;
         html += `<div class="section-title">${esc(s.name)}<span class="hint">${done}/${tasks.length} complete</span></div>
-    <div class="table-wrap">${tasks.map(t => `
-      <div class="task-row">
+    <div class="table-wrap"><div class="table-responsive"><table class="table table-hover align-middle mb-0" style="table-layout:fixed;width:100%;"><tbody>${tasks.map(t => {
+            let assignBadge = '';
+            if (t.assignedTo) {
+                const assignee = userName(t.assignedTo);
+                const isMe = t.assignedTo === u.id;
+                assignBadge = `<span class="badge-role" style="background:var(--canvas);padding:2px 6px;border-radius:4px;margin-left:6px;display:inline-block;${isMe ? 'color:var(--amber);background:rgba(215,25,32,0.1);' : ''}">${esc(assignee)}</span>`;
+            }
+            return `
+      <tr><td style="padding:0;">
+      <div class="task-row" style="margin:0;border:none;border-radius:0;border-bottom:1px solid var(--line);">
         <div class="task-check ${t.completed ? 'done' : ''}" data-toggle="${t.id}">${t.completed ? '✓' : ''}</div>
-        <div class="task-title ${t.completed ? 'done' : ''}">${esc(t.title)}</div>
-        <div class="task-meta">${t.completed ? 'done by ' + esc(userName(t.completedBy)) + ' · ' + fmtTime(t.completedAt) : ''}</div>
-      </div>`).join('') || '<div class="empty-note">No tasks configured for this store yet.</div>'}
-    </div>
-    ${canManage && (u.role === 'admin' || u.storeId === s.id) ? `
-      <div class="inline-form">
-        <input type="text" placeholder="Add a recurring daily task…" id="taskInput_${s.id}">
-        <button class="btn btn-ghost btn-sm" data-addtask="${s.id}">Add</button>
+        <div style="flex:1;min-width:0;">
+            <div class="task-title ${t.completed ? 'done' : ''}" style="white-space:normal;">${esc(t.title)} ${assignBadge}</div>
+            <div class="task-meta">${t.completed ? 'done by ' + esc(userName(t.completedBy)) + ' · ' + fmtTime(t.completedAt) : ''}</div>
+        </div>
       </div>
-      <details style="margin-top:8px;"><summary class="subtle-link">Manage checklist (${STATE.taskTemplates.filter(t => t.storeId === s.id && t.active).length} active)</summary>
+      </td></tr>`;
+        }).join('') || '<tr><td class="empty-note">No tasks configured for this store yet.</td></tr>'}
+    </tbody></table></div></div>
+    ${canManage && (u.role !== 'sales_staff') ? `
+      <details style="margin-top:16px;margin-bottom:24px;"><summary class="subtle-link">Manage checklist (${STATE.taskTemplates.filter(t => t.storeId === s.id && t.active).length} active)</summary>
       <div style="margin-top:8px;">
-      ${STATE.taskTemplates.filter(t => t.storeId === s.id && t.active).map(t => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 2px;font-size:13px;">
-          <span>${esc(t.title)}</span><span class="subtle-link" style="color:var(--alert)" data-removetpl="${t.id}">Remove</span>
-        </div>`).join('')}
+      ${STATE.taskTemplates.filter(t => t.storeId === s.id && t.active).map(t => {
+            let recStr = 'Daily';
+            if (t.recurrence) {
+                if (t.recurrence.type === 'weekly') recStr = 'Weekly';
+                if (t.recurrence.type === 'monthly') recStr = 'Monthly (Day ' + t.recurrence.dayOfMonth + ')';
+            }
+            let assignStr = t.assignedTo ? ' · ' + esc(userName(t.assignedTo)) : ' · Any staff';
+            return `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px;">
+          <div><div style="font-weight:500;">${esc(t.title)}</div><div class="task-meta" style="margin-top:4px;">${recStr}${assignStr}</div></div>
+          <span class="subtle-link" style="color:var(--alert);padding:8px;cursor:pointer;" data-removetpl="${t.id}">Remove</span>
+        </div>`;
+        }).join('')}
       </div></details>` : ''}
     `;
     });
-    return html || '<div class="empty-note">No stores in your scope.</div>';
+    return html || '<div class="empty-note">No stores available.</div>';
 }
 
 export function renderLeavePage() {
@@ -998,6 +1022,156 @@ export function editStoreModal(storeId, triggerRender, showToast, getGeoLocation
 
         closeModal();
         showToast('Store updated successfully.');
+        triggerRender();
+    });
+}
+
+export function createTaskModal(triggerRender, showToast, uidGenerator, persistTemplates, ensureInstancesForDate, todayStr) {
+    const u = STATE.user;
+    const canSelectMultipleStores = u.role === 'area_manager' || u.role === 'admin';
+    const accessibleStores = storesForUser(u);
+
+    const storeOptions = accessibleStores.map(s => `
+        <label class="multi-check-row">
+            <input type="checkbox" class="task-store-check" value="${s.id}" ${!canSelectMultipleStores ? 'checked' : ''}>
+            <span>${esc(s.name)}</span>
+        </label>
+    `).join('');
+
+    const content = `
+      <div class="modal-head">
+        <h3>Create Task</h3>
+        <button type="button" class="icon-close" id="closeModalBtn" aria-label="Close">✕</button>
+      </div>
+
+      <form id="modalTaskForm" class="stack-form">
+        <div class="field">
+            <label>Task Title</label>
+            <input type="text" id="taskTitle" required placeholder="e.g. Clean shelves">
+        </div>
+        
+        <div class="field" style="${canSelectMultipleStores ? '' : 'display:none;'}">
+            <label>Stores</label>
+            <div class="multi-check-list" id="taskStoresList" style="max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:8px;">
+                ${storeOptions}
+            </div>
+            <div class="field-note">Tasks will be created for selected stores.</div>
+        </div>
+
+        <div class="field">
+            <label>Assign To (Optional)</label>
+            <select id="taskAssignee" class="form-select" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);">
+                <option value="">Any staff member</option>
+            </select>
+            <div class="field-note" id="assigneeNote">Select a specific staff member.</div>
+        </div>
+
+        <div class="field">
+            <label>Recurrence</label>
+            <select id="taskRecurrenceType" class="form-select" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly (Specific Days)</option>
+                <option value="monthly">Monthly (Specific Date)</option>
+            </select>
+        </div>
+
+        <div class="field" id="weeklyOptions" style="display:none;">
+            <label>Select Days</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i) => `
+                    <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" class="task-day-check" value="${i}"> ${d}</label>
+                `).join('')}
+            </div>
+        </div>
+
+        <div class="field" id="monthlyOptions" style="display:none;">
+            <label>Day of Month</label>
+            <input type="number" id="taskDayOfMonth" min="1" max="31" value="1" class="form-control" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);">
+        </div>
+
+        <div class="modal-actions mobile-actions" style="margin-top:24px;">
+          <button type="submit" class="btn btn-primary btn-block">Create Task</button>
+          <button type="button" class="btn btn-ghost btn-block" id="cancelModalBtn">Cancel</button>
+        </div>
+      </form>
+    `;
+    openModal(content);
+
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+
+    const recType = document.getElementById('taskRecurrenceType');
+    const weeklyOpt = document.getElementById('weeklyOptions');
+    const monthlyOpt = document.getElementById('monthlyOptions');
+
+    recType.addEventListener('change', () => {
+        weeklyOpt.style.display = recType.value === 'weekly' ? 'block' : 'none';
+        monthlyOpt.style.display = recType.value === 'monthly' ? 'block' : 'none';
+    });
+
+    const updateAssigneeDropdown = () => {
+        const storeChecks = Array.from(document.querySelectorAll('.task-store-check:checked')).map(c => c.value);
+        const assigneeSel = document.getElementById('taskAssignee');
+        const note = document.getElementById('assigneeNote');
+
+        if (storeChecks.length === 0) {
+            assigneeSel.innerHTML = '<option value="">Any staff member</option>';
+            assigneeSel.disabled = true;
+            note.innerText = 'Select a store first to see available staff.';
+            return;
+        }
+        if (storeChecks.length > 1) {
+            assigneeSel.innerHTML = '<option value="">Any staff member</option>';
+            assigneeSel.disabled = true;
+            note.innerText = 'Assignments are disabled when multiple stores are selected.';
+            return;
+        }
+
+        assigneeSel.disabled = false;
+        note.innerText = 'Select a specific staff member.';
+        const sid = storeChecks[0];
+        const staff = STATE.users.filter(u => u.storeId === sid && u.role === 'sales_staff');
+        assigneeSel.innerHTML = '<option value="">Any staff member</option>' + staff.map(st => `<option value="${st.id}">${esc(st.name)}</option>`).join('');
+    };
+
+    document.querySelectorAll('.task-store-check').forEach(cb => cb.addEventListener('change', updateAssigneeDropdown));
+    updateAssigneeDropdown();
+
+    document.getElementById('modalTaskForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = document.getElementById('taskTitle').value.trim();
+        const selectedStoreIds = Array.from(document.querySelectorAll('.task-store-check:checked')).map(c => c.value);
+        if (!selectedStoreIds.length) return showToast('Please select at least one store.');
+
+        let assignedTo = null;
+        if (selectedStoreIds.length === 1 && document.getElementById('taskAssignee').value) {
+            assignedTo = document.getElementById('taskAssignee').value;
+        }
+
+        let recurrence = { type: recType.value };
+        if (recType.value === 'weekly') {
+            const days = Array.from(document.querySelectorAll('.task-day-check:checked')).map(c => parseInt(c.value, 10));
+            if (!days.length) return showToast('Please select at least one day.');
+            recurrence.days = days;
+        } else if (recType.value === 'monthly') {
+            recurrence.dayOfMonth = parseInt(document.getElementById('taskDayOfMonth').value, 10) || 1;
+        }
+
+        selectedStoreIds.forEach(sid => {
+            STATE.taskTemplates.push({
+                id: uidGenerator(),
+                storeId: sid,
+                title,
+                active: true,
+                assignedTo,
+                recurrence
+            });
+        });
+
+        await persistTemplates();
+        ensureInstancesForDate(selectedStoreIds, todayStr());
+        closeModal();
+        showToast('Task created successfully.');
         triggerRender();
     });
 }

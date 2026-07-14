@@ -10,7 +10,7 @@ import {
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
-    editEmployeeModal, editStoreModal
+    editEmployeeModal, editStoreModal, createTaskModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -40,11 +40,27 @@ function geoOnce() {
 
 export function ensureInstancesForDate(storeIds, date) {
     let changed = false;
+    const d = new Date(date);
+    const dayOfWeek = d.getDay(); // 0-6
+    const dayOfMonth = d.getDate();
+
     storeIds.forEach(sid => {
         STATE.taskTemplates.filter(t => t.storeId === sid && t.active).forEach(t => {
-            if (!STATE.taskInstances.find(i => i.templateId === t.id && i.date === date)) {
-                STATE.taskInstances.push({ id: uid(), templateId: t.id, storeId: sid, date, title: t.title, completed: false, completedBy: null, completedAt: null });
-                changed = true;
+            let shouldRun = false;
+            const r = t.recurrence || { type: 'daily' };
+            if (r.type === 'daily') shouldRun = true;
+            else if (r.type === 'weekly' && r.days && r.days.includes(dayOfWeek)) shouldRun = true;
+            else if (r.type === 'monthly' && r.dayOfMonth === dayOfMonth) shouldRun = true;
+            else if (!r.type) shouldRun = true;
+
+            if (shouldRun) {
+                if (!STATE.taskInstances.find(i => i.templateId === t.id && i.date === date)) {
+                    STATE.taskInstances.push({
+                        id: uid(), templateId: t.id, storeId: sid, date, title: t.title,
+                        assignedTo: t.assignedTo || null, completed: false, completedBy: null, completedAt: null
+                    });
+                    changed = true;
+                }
             }
         });
     });
@@ -453,6 +469,10 @@ function tickClock() {
 
 /* System Bootstrapper Init Engine */
 async function init() {
+    const btnCreateTask = document.getElementById('btnCreateTask');
+    if (btnCreateTask) {
+        btnCreateTask.addEventListener('click', () => createTaskModal(render, showToast, uid, persistTemplates, ensureInstancesForDate, todayStr));
+    }
     let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
         loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
         loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
