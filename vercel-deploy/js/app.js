@@ -1,15 +1,16 @@
 import { STATE, RADIUS_M } from './config.js';
-import { uid, todayStr, localDateStr, distanceMeters, isLateAt } from './helpers.js';
+import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes} from './helpers.js';
 import {
-    loadKey, saveKey, seedData, storeIdsForUser, employeesForUser,
+    loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores
+    persistLeaves
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
-    openModal, closeModal, addEmployeeModal, addStoreModal, manualPunchModal
+    addEmployeeModal, addStoreModal, manualPunchModal,
+    editEmployeeModal, editStoreModal, createTaskModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -39,11 +40,27 @@ function geoOnce() {
 
 export function ensureInstancesForDate(storeIds, date) {
     let changed = false;
+    const d = new Date(date);
+    const dayOfWeek = d.getDay(); // 0-6
+    const dayOfMonth = d.getDate();
+
     storeIds.forEach(sid => {
         STATE.taskTemplates.filter(t => t.storeId === sid && t.active).forEach(t => {
-            if (!STATE.taskInstances.find(i => i.templateId === t.id && i.date === date)) {
-                STATE.taskInstances.push({ id: uid(), templateId: t.id, storeId: sid, date, title: t.title, completed: false, completedBy: null, completedAt: null });
-                changed = true;
+            let shouldRun = false;
+            const r = t.recurrence || { type: 'daily' };
+            if (r.type === 'daily') shouldRun = true;
+            else if (r.type === 'weekly' && r.days && r.days.includes(dayOfWeek)) shouldRun = true;
+            else if (r.type === 'monthly' && r.dayOfMonth === dayOfMonth) shouldRun = true;
+            else if (!r.type) shouldRun = true;
+
+            if (shouldRun) {
+                if (!STATE.taskInstances.find(i => i.templateId === t.id && i.date === date)) {
+                    STATE.taskInstances.push({
+                        id: uid(), templateId: t.id, storeId: sid, date, title: t.title,
+                        assignedTo: t.assignedTo || null, completed: false, completedBy: null, completedAt: null
+                    });
+                    changed = true;
+                }
             }
         });
     });
@@ -53,23 +70,43 @@ export function ensureInstancesForDate(storeIds, date) {
 
 export function monthlyReport(userId, monthDate) {
     const y = monthDate.getFullYear(), m = monthDate.getMonth();
-    const today = new Date(); const isCurrentMonth = (today.getFullYear() === y && today.getMonth() === m);
+    const today = new Date();
+    const isCurrentMonth = (today.getFullYear() === y && today.getMonth() === m);
     const lastDay = isCurrentMonth ? today.getDate() : new Date(y, m + 1, 0).getDate();
+
     let present = 0, late = 0, absent = 0, leave = 0;
+    let totalUnderMin = 0, totalOverMin = 0;
     const rows = [];
+
     for (let d = 1; d <= lastDay; d++) {
         const dt = new Date(y, m, d); const ds = localDateStr(dt);
-        // if (isSunday(ds)) continue;
         const rec = STATE.attendance.find(a => a.userId === userId && a.date === ds);
-        const onLeave = STATE.leaves.find(l => l.userId === userId && l.status === 'approved' && ds >= l.fromDate && ds <= l.toDate);
+        const onLeave = STATE.leaves.find(l =>
+            l.userId === userId && l.status === 'approved' && ds >= l.fromDate && ds <= l.toDate
+        );
+
         let status;
-        if (onLeave) { status = 'leave'; leave++; }
-        else if (isPunchPending(rec)) { status = 'pending'; }
-        else if (isPunchCountable(rec)) { status = rec.late ? 'late' : 'present'; rec.late ? late++ : present++; }
-        else { status = 'absent'; absent++; }
+        if (onLeave) {
+            status = 'leave'; leave++;
+        } else if (isPunchPending(rec)) {
+            status = 'pending';
+        } else if (isPunchCountable(rec)) {
+            status = rec.late ? 'late' : 'present';
+            rec.late ? late++ : present++;
+
+            const store = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
+            const diffMin = computeUnderOverMinutes(rec, store);
+            if (diffMin != null) {
+                if (diffMin < 0) totalUnderMin += -diffMin;
+                else totalOverMin += diffMin;
+            }
+        } else {
+            status = 'absent'; absent++;
+        }
+
         rows.push({ date: ds, status, rec: isPunchRejected(rec) ? null : rec });
     }
-    return { present, late, absent, leave, rows };
+    return { present, late, absent, leave, totalUnderMin, totalOverMin, rows };
 }
 
 function showToast(msg) {
@@ -182,6 +219,19 @@ function attachLoginEvents() {
 }
 
 function attachAppEvents() {
+    let punchStoreSel = document.getElementById('punchStore');
+    if (punchStoreSel) {
+        punchStoreSel.addEventListener('change', () => {
+            STATE.punchStoreId = punchStoreSel.value;
+        });
+    }
+
+    // Shift radio buttons: no default is pre-selected, user must explicitly choose one
+        document.querySelectorAll('input[name="punchShift"]').forEach(radio => {
+                radio.addEventListener('change', () => {
+                        STATE.punchShift = parseInt(radio.value, 10) === 2 ? 2 : 1;
+                    });
+            });
     document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => { STATE.page = el.dataset.page; STATE.punchStatus = ''; STATE.punchOk = null; render(); }));
     const menuToggleBtn = document.getElementById('menuToggleBtn');
     if (menuToggleBtn) {
@@ -212,7 +262,7 @@ function attachAppEvents() {
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
     const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
-    const punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
+    punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
 
     document.querySelectorAll('[data-punch-approve]').forEach(el => el.addEventListener('click', async () => {
         const rec = STATE.attendance.find(a => a.id === el.dataset.punchApprove); if (!rec) return;
@@ -273,13 +323,30 @@ function attachAppEvents() {
         const d = new Date(STATE.month); d.setMonth(d.getMonth() + parseInt(el.dataset.month)); STATE.month = d; render();
     }));
 
-    const addEmpBtn = document.getElementById('addEmployeeBtn'); if (addEmpBtn) addEmpBtn.addEventListener('click', () => addEmployeeModal(render, showToast, uid));
-    const addStoreBtn = document.getElementById('addStoreBtn'); if (addStoreBtn) addStoreBtn.addEventListener('click', () => addStoreModal(render, showToast, uid, geoOnce));
+    const addEmpBtn = document.getElementById('addEmployeeBtn');
+    if (addEmpBtn) addEmpBtn.addEventListener('click', () => addEmployeeModal(render, showToast, uid));
 
-    document.querySelectorAll('[data-toggleactive]').forEach(el => el.addEventListener('click', async () => {
-        const u = STATE.users.find(x => x.id === el.dataset.toggleactive); u.active = u.active === false;
-        await persistUsers(); render();
-    }));
+    const addStoreBtn = document.getElementById('addStoreBtn');
+    if (addStoreBtn) addStoreBtn.addEventListener('click', () => addStoreModal(render, showToast, uid, geoOnce));
+
+    document.querySelectorAll('[data-edituser]').forEach(el => {
+        el.addEventListener('click', () => {
+            if (!STATE.user || STATE.user.role !== 'admin') return;
+            editEmployeeModal(el.dataset.edituser, render, showToast);
+        });
+    });
+
+    document.querySelectorAll('[data-editstore]').forEach(el => {
+        el.addEventListener('click', () => {
+            if (!STATE.user || STATE.user.role !== 'admin') return;
+            editStoreModal(el.dataset.editstore, render, showToast, geoOnce);
+        });
+    });
+
+    // document.querySelectorAll('[data-toggleactive]').forEach(el => el.addEventListener('click', async () => {
+    //     const u = STATE.users.find(x => x.id === el.dataset.toggleactive); u.active = u.active === false;
+    //     await persistUsers(); render();
+    // }));
 
     // Toggle dropdowns on click
     document.querySelectorAll('[data-dropdown-toggle]').forEach(el => {
@@ -354,6 +421,9 @@ async function handlePunchIn() {
     const storeId = sel ? sel.value : u.storeId;
     const store = STATE.stores.find(s => s.id === storeId);
     if (!store) { STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.'; STATE.punchOk = false; render(); return; }
+    // No default shift is pre-selected — the user must explicitly pick Shift 1 or Shift 2.
+    const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
+    if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
         const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
@@ -362,8 +432,9 @@ async function handlePunchIn() {
         const now = new Date(), date = localDateStr(now);
         // Clear any rejected request for today so it doesn't linger alongside the real punch.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
-        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], late: isLateAt(now) });
-        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; render();
+        const shiftNumber = STATE.punchShift;
+        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], shift: shiftNumber, late: isLateAt(now, store, shiftNumber)  });
+        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; STATE.punchShift = null; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
 
@@ -398,6 +469,10 @@ function tickClock() {
 
 /* System Bootstrapper Init Engine */
 async function init() {
+    const btnCreateTask = document.getElementById('btnCreateTask');
+    if (btnCreateTask) {
+        btnCreateTask.addEventListener('click', () => createTaskModal(render, showToast, uid, persistTemplates, ensureInstancesForDate, todayStr));
+    }
     let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
         loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
         loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)

@@ -43,10 +43,50 @@ export const persistLeaves = () => saveKey('leaves', STATE.leaves, true);
 
 export function seedData() {
     const stores = [
-        { id: 'st_a', name: 'Koregaon Park', address: 'North Main Road, Koregaon Park, Pune', lat: 18.5159, lng: 73.9472 },
-        { id: 'st_b', name: 'Baner', address: 'Baner Road, Pune', lat: 18.5590, lng: 73.7868 },
-        { id: 'st_c', name: 'Kothrud', address: 'Karve Road, Kothrud, Pune', lat: 18.5074, lng: 73.8077 },
-        { id: 'st_d', name: 'Viman Nagar', address: 'Viman Nagar Main Road, Pune', lat: 18.5679, lng: 73.9143 },
+        {
+            id: 'st_a',
+            name: 'Koregaon Park',
+            address: 'North Main Road, Koregaon Park, Pune',
+            lat: 18.5159,
+            lng: 73.9472,
+            shift1Start: '09:30',
+            shift1End: '18:00',
+            shift2Start: '12:30',
+            shift2End: '21:00'
+        },
+        {
+            id: 'st_b',
+            name: 'Baner',
+            address: 'Baner Road, Pune',
+            lat: 18.5590,
+            lng: 73.7868,
+            shift1Start: '10:00',
+            shift1End: '18:30',
+            shift2Start: '13:00',
+            shift2End: '21:30'
+        },
+        {
+            id: 'st_c',
+            name: 'Kothrud',
+            address: 'Karve Road, Kothrud, Pune',
+            lat: 18.5074,
+            lng: 73.8077,
+            shift1Start: '09:00',
+            shift1End: '17:30',
+            shift2Start: '12:30',
+            shift2End: '21:00'
+        },
+        {
+            id: 'st_d',
+            name: 'Viman Nagar',
+            address: 'Viman Nagar Main Road, Pune',
+            lat: 18.5679,
+            lng: 73.9143,
+            shift1Start: '09:30',
+            shift1End: '18:00',
+            shift2Start: '13:00',
+            shift2End: '21:30'
+        },
     ];
     const users = [
         { id: 'u_admin', name: 'Ananya Kulkarni', email: 'admin@storeflow.demo', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
@@ -68,7 +108,7 @@ export function seedData() {
     });
     const taskTitles = ['Open store & switch on lights', 'Clean & organize shelves', 'Check & log stock levels', 'Update daily sales register', 'Close store & lock up'];
     const taskTemplates = [];
-    stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true }); }); });
+    stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true, assignedTo: null, recurrence: { type: 'daily' } }); }); });
     return { stores, users, taskTemplates };
 }
 
