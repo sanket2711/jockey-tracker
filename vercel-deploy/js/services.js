@@ -1,4 +1,4 @@
-import { STATE, BACKEND_API_URL } from './config.js';
+import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
 
 export async function saveKey(key, value, shared) {
     try {
@@ -8,7 +8,7 @@ export async function saveKey(key, value, shared) {
         }
         const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
             body: JSON.stringify({ value })
         });
         if (!response.ok) throw new Error('Network error');
@@ -25,7 +25,8 @@ export async function loadKey(key, shared) {
             const localData = localStorage.getItem(key);
             return localData ? JSON.parse(localData) : null;
         }
-        const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`);
+        const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
+            headers: { 'x-api-key': API_KEY }});
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
