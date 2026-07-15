@@ -46,68 +46,64 @@ export function seedData() {
     const stores = [
         {
             id: 'st_a',
-            name: 'Koregaon Park',
-            address: 'North Main Road, Koregaon Park, Pune',
-            lat: 18.5159,
-            lng: 73.9472,
-            shift1Start: '09:30',
-            shift1End: '18:00',
-            shift2Start: '12:30',
-            shift2End: '21:00'
+            name: 'S89 - Seasons Mall',
+            address: 'Seasons Mall, Hadapsar, Pune',
+            lat: 18.515734050581795,
+            lng: 73.94694155262285,
+            shift1Start: '10:30',
+            shift1End: '20:30',
+            shift2Start: '12:00',
+            shift2End: '22:00'
         },
         {
             id: 'st_b',
-            name: 'Baner',
-            address: 'Baner Road, Pune',
+            name: 'M45 - Eon Kharadi',
+            address: 'Eon IT Park, Kharadi, Pune',
             lat: 18.5590,
             lng: 73.7868,
             shift1Start: '10:00',
-            shift1End: '18:30',
-            shift2Start: '13:00',
+            shift1End: '20:00',
+            shift2Start: '11:30',
             shift2End: '21:30'
         },
         {
             id: 'st_c',
-            name: 'Kothrud',
-            address: 'Karve Road, Kothrud, Pune',
+            name: 'MT7 - Nyati Plaza',
+            address: 'Nyati Plaza, Kharadi, Pune',
             lat: 18.5074,
             lng: 73.8077,
-            shift1Start: '09:00',
-            shift1End: '17:30',
-            shift2Start: '12:30',
-            shift2End: '21:00'
+            shift1Start: '10:30',
+            shift1End: '20:30',
+            shift2Start: '12:00',
+            shift2End: '22:00'
         },
         {
             id: 'st_d',
-            name: 'Viman Nagar',
-            address: 'Viman Nagar Main Road, Pune',
+            name: 'M43 - Baramati',
+            address: 'Main Road, Baramati',
             lat: 18.5679,
             lng: 73.9143,
-            shift1Start: '09:30',
-            shift1End: '18:00',
-            shift2Start: '13:00',
+            shift1Start: '10:00',
+            shift1End: '20:00',
+            shift2Start: '11:30',
             shift2End: '21:30'
         },
     ];
     const users = [
-        { id: 'u_admin', name: 'Ananya Kulkarni', email: 'admin@storeflow.demo', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
-        { id: 'u_area1', name: 'Rohan Mehta', email: 'rohan.area@storeflow.demo', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_a', 'st_d'], active: true },
-        { id: 'u_area2', name: 'Priya Nair', email: 'priya.area@storeflow.demo', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_b', 'st_c'], active: true },
-        { id: 'u_mgr_a', name: 'Vikram Shah', email: 'vikram.manager@storeflow.demo', password: 'manager123', role: 'store_manager', storeId: 'st_a', storeIds: null, active: true },
-        { id: 'u_mgr_b', name: 'Sneha Joshi', email: 'sneha.manager@storeflow.demo', password: 'manager123', role: 'store_manager', storeId: 'st_b', storeIds: null, active: true },
-        { id: 'u_mgr_c', name: 'Arjun Desai', email: 'arjun.manager@storeflow.demo', password: 'manager123', role: 'store_manager', storeId: 'st_c', storeIds: null, active: true },
-        { id: 'u_mgr_d', name: 'Meera Iyer', email: 'meera.manager@storeflow.demo', password: 'manager123', role: 'store_manager', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_admin1', name: 'Sanket Baheti', email: 'sanketbaheti1@gmail.com', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
+        { id: 'u_area1', name: 'Dinesh Pardeshi', email: 'dinesh.area@sge.demo', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_a', 'st_b', 'st_c', 'st_d'], active: true },
+        { id: 'u_mgr_a', name: 'Sundar Maske', email: 'sundar.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_mgr_b', name: 'Omkar Shine', email: 'omkar.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_mgr_c', name: 'Kalyan Maske', email: 'kalyan.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_c', storeIds: null, active: true },
+        { id: 'u_mgr_d', name: 'Dinesh M43', email: 'dinesh.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_d', storeIds: null, active: true },
     ];
     const staffNames = [
-        ['Aditi Rao','st_a'],['Karan Bhosale','st_a'],['Neha Pawar','st_a'],['Siddharth Kale','st_a'],['Ishita Deshmukh','st_a'],
-        ['Yash Kulkarni','st_b'],['Pooja Shinde','st_b'],['Rahul Gaikwad','st_b'],['Simran Kaur','st_b'],
-        ['Aman Jadhav','st_c'],['Divya Patil','st_c'],['Manoj Chavan','st_c'],['Ritika Sawant','st_c'],
-        ['Farhan Sheikh','st_d'],['Gauri Kadam','st_d'],['Om Bhagat','st_d'],['Tanvi More','st_d'],['Rohit Salunkhe','st_d'],
+        ['Adarsh Palkhe','st_a']
     ];
     staffNames.forEach((s, i) => {
-        users.push({ id: 'u_staff' + i, name: s[0], email: 'staff' + (i + 1) + '@storeflow.demo', password: 'staff123', role: 'sales_staff', storeId: s[1], storeIds: null, active: true });
+        users.push({ id: 'u_staff' + i, name: s[0], email: 'staff' + (i + 1) + '@sge.demo', password: 'staff123', role: 'sales_staff', storeId: s[1], storeIds: null, active: true });
     });
-    const taskTitles = ['Open store & switch on lights', 'Clean & organize shelves', 'Check & log stock levels', 'Update daily sales register', 'Close store & lock up'];
+    const taskTitles = ['Open store & switch on lights', 'Clean & organize display', 'Close store & lock up'];
     const taskTemplates = [];
     stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true, assignedTo: null, recurrence: { type: 'daily' } }); }); });
     return { stores, users, taskTemplates };
