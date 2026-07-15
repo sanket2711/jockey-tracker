@@ -227,7 +227,7 @@ function attachAppEvents() {
     }
 
     // Shift radio buttons: no default is pre-selected, user must explicitly choose one
-        document.querySelectorAll('input[name="punchShift"]').forEach(radio => {
+    document.querySelectorAll('input[name="punchShift"]').forEach(radio => {
                 radio.addEventListener('change', () => {
                         STATE.punchShift = parseInt(radio.value, 10) === 2 ? 2 : 1;
                     });
@@ -258,7 +258,6 @@ function attachAppEvents() {
         render();
     }));
     const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
-
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
     const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
@@ -328,6 +327,13 @@ function attachAppEvents() {
 
     const addStoreBtn = document.getElementById('addStoreBtn');
     if (addStoreBtn) addStoreBtn.addEventListener('click', () => addStoreModal(render, showToast, uid, geoOnce));
+
+    const btnCreateTask = document.getElementById('btnCreateTask');
+    if (btnCreateTask) {
+        btnCreateTask.addEventListener('click', () =>
+            createTaskModal(render, showToast, uid, persistTemplates, ensureInstancesForDate, todayStr)
+        );
+    }
 
     document.querySelectorAll('[data-edituser]').forEach(el => {
         el.addEventListener('click', () => {
@@ -467,15 +473,18 @@ function tickClock() {
     update(); clockInterval = setInterval(update, 1000);
 }
 
+document.addEventListener('click', (e) => {
+    if (STATE.activeDropdown && !e.target.closest('.multiselect-dropdown')) {
+        STATE.activeDropdown = null;
+        render();
+    }
+});
+
 /* System Bootstrapper Init Engine */
 async function init() {
-    const btnCreateTask = document.getElementById('btnCreateTask');
-    if (btnCreateTask) {
-        btnCreateTask.addEventListener('click', () => createTaskModal(render, showToast, uid, persistTemplates, ensureInstancesForDate, todayStr));
-    }
     let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
-        loadKey('stores', false), loadKey('users', false), loadKey('task_templates', false),
-        loadKey('attendance', false), loadKey('task_instances', false), loadKey('leaves', false)
+        loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
+        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
     ]);
     if (!stores || !users) {
         const seed = seedData();
@@ -492,12 +501,5 @@ async function init() {
     STATE.ready = true;
     render();
 }
-
-document.addEventListener('click', (e) => {
-    if (STATE.activeDropdown && !e.target.closest('.multiselect-dropdown')) {
-        STATE.activeDropdown = null;
-        render();
-    }
-});
 
 init();
