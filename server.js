@@ -5,14 +5,27 @@ require('dotenv').config();
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL || 'https://your-project.vercel.app',
+    'http://localhost:3000'
+  ]
+}));
+
+const authMiddleware = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  if (apiKey !== process.env.API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+};
 
 // Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("Connected to MongoDB Atlas"))
-  .catch(err => console.error("Database connection error:", err));
+    .then(() => console.log("Connected to MongoDB Atlas"))
+    .catch(err => console.error("Database connection error:", err));
 
-// Single Schema to replicate the key-value structures cleanly
 const DataSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
   value: { type: mongoose.Schema.Types.Mixed, required: true }
@@ -20,7 +33,12 @@ const DataSchema = new mongoose.Schema({
 
 const DataModel = mongoose.model('DataRecord', DataSchema);
 
-// Get route
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// Apply auth to all API routes
+app.use('/api', authMiddleware);
+
+// GET route
 app.get('/api/storage/:key', async (req, res) => {
   try {
     const record = await DataModel.findOne({ key: req.params.key });
@@ -30,13 +48,16 @@ app.get('/api/storage/:key', async (req, res) => {
   }
 });
 
-// Save route
+// POST route
 app.post('/api/storage/:key', async (req, res) => {
+  if (req.body.value === undefined || req.body.value === null) {
+    return res.status(400).json({ error: 'value is required' });
+  }
   try {
-    const record = await DataModel.findOneAndUpdate(
-      { key: req.params.key },
-      { value: req.body.value },
-      { upsert: true, new: true }
+    await DataModel.findOneAndUpdate(
+        { key: req.params.key },
+        { value: req.body.value },
+        { upsert: true, new: true }
     );
     return res.json({ success: true });
   } catch (err) {
@@ -46,3 +67,8 @@ app.post('/api/storage/:key', async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+process.on('SIGTERM', async () => {
+  await mongoose.connection.close();
+  process.exit(0);
+});
