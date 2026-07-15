@@ -6,14 +6,33 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'https://jockey-tracker-three.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5500'
+].filter(Boolean);
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'https://your-project.vercel.app',
-    'http://localhost:3000'
-  ]
+  origin: function (origin, callback) {
+    // allow non-browser tools (curl/Postman have no Origin)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS: ' + origin));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-api-key'],
+  optionsSuccessStatus: 204
 }));
 
+// Explicit preflight handler (important with custom headers)
+app.options('*', cors());
+
 const authMiddleware = (req, res, next) => {
+  // Never require API key on preflight
+  if (req.method === 'OPTIONS') return next();
+
   const apiKey = req.headers['x-api-key'];
   if (apiKey !== process.env.API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -23,8 +42,8 @@ const authMiddleware = (req, res, next) => {
 
 // Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("Connected to MongoDB Atlas"))
-    .catch(err => console.error("Database connection error:", err));
+  .then(() => console.log('Connected to MongoDB Atlas'))
+  .catch(err => console.error('Database connection error:', err));
 
 const DataSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
@@ -35,10 +54,8 @@ const DataModel = mongoose.model('DataRecord', DataSchema);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// Apply auth to all API routes
 app.use('/api', authMiddleware);
 
-// GET route
 app.get('/api/storage/:key', async (req, res) => {
   try {
     const record = await DataModel.findOne({ key: req.params.key });
@@ -48,16 +65,15 @@ app.get('/api/storage/:key', async (req, res) => {
   }
 });
 
-// POST route
 app.post('/api/storage/:key', async (req, res) => {
   if (req.body.value === undefined || req.body.value === null) {
     return res.status(400).json({ error: 'value is required' });
   }
   try {
     await DataModel.findOneAndUpdate(
-        { key: req.params.key },
-        { value: req.body.value },
-        { upsert: true, new: true }
+      { key: req.params.key },
+      { value: req.body.value },
+      { upsert: true, new: true }
     );
     return res.json({ success: true });
   } catch (err) {
