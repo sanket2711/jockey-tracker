@@ -3,7 +3,7 @@ import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverM
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves
+    persistLeaves, persistUsers, persistStores
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -490,7 +490,7 @@ async function init() {
         const seed = seedData();
         stores = seed.stores; users = seed.users; taskTemplates = seed.taskTemplates;
         attendance = []; taskInstances = []; leaves = [];
-        await Promise.all([saveKey('stores', stores, false), saveKey('users', users, false), saveKey('task_templates', taskTemplates, false), saveKey('attendance', attendance, false), saveKey('task_instances', taskInstances, false), saveKey('leaves', leaves, false)]);
+        await Promise.all([saveKey('stores', stores, true), saveKey('users', users, true), saveKey('task_templates', taskTemplates, true), saveKey('attendance', attendance, true), saveKey('task_instances', taskInstances, true), saveKey('leaves', leaves, true)]);
     }
     STATE.stores = stores || []; STATE.users = users || []; STATE.taskTemplates = taskTemplates || [];
     STATE.attendance = attendance || []; STATE.taskInstances = taskInstances || []; STATE.leaves = leaves || [];
