@@ -3,7 +3,8 @@ import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
 export async function saveKey(key, value, shared) {
     try {
         if (!shared) {
-            localStorage.setItem(key, JSON.stringify(value));
+            if (value === null) localStorage.removeItem(key);
+            else localStorage.setItem(key, JSON.stringify(value));
             return true;
         }
         const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
@@ -11,7 +12,10 @@ export async function saveKey(key, value, shared) {
             headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
             body: JSON.stringify({ value })
         });
-        if (!response.ok) throw new Error('Network error');
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Save ${key} failed: ${response.status} ${text}`);
+        }
         return true;
     } catch (e) {
         console.error('Save failed', key, e);
@@ -27,7 +31,10 @@ export async function loadKey(key, shared) {
         }
         const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
             headers: { 'x-api-key': API_KEY }});
-        if (!response.ok) return null;
+        if (!response.ok) {
+            console.error('Load failed', key, response.status);
+            return null;
+        }
         return await response.json();
     } catch (e) {
         console.error('Load failed', key, e);

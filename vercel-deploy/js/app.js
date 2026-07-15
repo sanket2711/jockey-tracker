@@ -3,7 +3,7 @@ import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverM
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves
+    persistLeaves, persistUsers, persistStores
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
