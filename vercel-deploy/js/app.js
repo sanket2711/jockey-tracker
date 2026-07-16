@@ -3,7 +3,7 @@ import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverM
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores
+    persistLeaves, persistUsers, persistStores, loadUsersSafe, loginRequest
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -116,9 +116,10 @@ function showToast(msg) {
 
 /* Auth functions */
 async function login(email, password) {
-    const u = STATE.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase() && x.password === password && x.active !== false);
+    const u = await loginRequest(email, password); // server verifies, no password returned
     if (!u) return false;
-    STATE.user = u; STATE.page = 'dashboard'; STATE.navOpen = false;
+    STATE.user = u;
+    STATE.page = 'dashboard'; STATE.navOpen = false;
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
     STATE.activeDropdown = null;
@@ -412,6 +413,58 @@ function attachAppEvents() {
         });
     });
 
+    // Attendance filters
+    document.querySelectorAll('.att-store-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.attendanceFilterStoreIds) STATE.attendanceFilterStoreIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.attendanceFilterStoreIds.includes(val)) STATE.attendanceFilterStoreIds.push(val);
+            } else {
+                STATE.attendanceFilterStoreIds = STATE.attendanceFilterStoreIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+    document.querySelectorAll('.att-staff-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.attendanceFilterStaffIds) STATE.attendanceFilterStaffIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.attendanceFilterStaffIds.includes(val)) STATE.attendanceFilterStaffIds.push(val);
+            } else {
+                STATE.attendanceFilterStaffIds = STATE.attendanceFilterStaffIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+
+// Team filters
+    document.querySelectorAll('.team-store-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.teamFilterStoreIds) STATE.teamFilterStoreIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.teamFilterStoreIds.includes(val)) STATE.teamFilterStoreIds.push(val);
+            } else {
+                STATE.teamFilterStoreIds = STATE.teamFilterStoreIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+    document.querySelectorAll('.team-staff-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.teamFilterStaffIds) STATE.teamFilterStaffIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.teamFilterStaffIds.includes(val)) STATE.teamFilterStaffIds.push(val);
+            } else {
+                STATE.teamFilterStaffIds = STATE.teamFilterStaffIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+
     if (document.getElementById('liveClock')) tickClock();
 }
 
@@ -483,7 +536,7 @@ document.addEventListener('click', (e) => {
 /* System Bootstrapper Init Engine */
 async function init() {
     let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
-        loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
+        loadKey('stores', true), loadUsersSafe(), loadKey('task_templates', true),
         loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
     ]);
     if (!stores || !users) {

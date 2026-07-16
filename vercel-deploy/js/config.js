@@ -11,12 +11,16 @@ export const STATE = {
     punchStatus: '',
     punchOk: null,
     punchStoreId: null,
-    punchShift: null,          // NEW: currently-selected shift (1 or 2)
+    punchShift: null,
     month: new Date(),
     navOpen: false,
     toast: null,
     reportFilterStoreIds: [],
     reportFilterStaffIds: [],
+    attendanceFilterStoreIds: [],
+    attendanceFilterStaffIds: [],
+    teamFilterStoreIds: [],
+    teamFilterStaffIds: [],
     activeDropdown: null
 };
 

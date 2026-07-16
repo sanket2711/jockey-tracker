@@ -42,6 +42,34 @@ export async function loadKey(key, shared) {
     }
 }
 
+export async function loadUsersSafe() {
+    try {
+        const response = await fetch(`${BACKEND_API_URL}/api/users`, {
+            headers: { 'x-api-key': API_KEY }
+        });
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.error('Load users failed', e);
+        return null;
+    }
+}
+
+export async function loginRequest(email, password) {
+    try {
+        const response = await fetch(`${BACKEND_API_URL}/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+            body: JSON.stringify({ email, password })
+        });
+        if (!response.ok) return null;
+        return await response.json(); // safe user, no password
+    } catch (e) {
+        console.error('Login failed', e);
+        return null;
+    }
+}
+
 export const persistStores = () => saveKey('stores', STATE.stores, true);
 export const persistUsers = () => saveKey('users', STATE.users, true);
 export const persistTemplates = () => saveKey('task_templates', STATE.taskTemplates, true);
@@ -132,6 +160,29 @@ export function employeesForUser(u) {
     if (u.role === 'area_manager') return STATE.users.filter(x => ids.includes(x.storeId));
     if (u.role === 'store_manager') return STATE.users.filter(x => x.storeId === u.storeId && x.role === 'sales_staff');
     return [];
+}
+
+// New: unified "team" helper used by Dashboard, Attendance, Team, Reports
+export function teamForUser(u) {
+    if (!u) return [];
+    const ids = storeIdsForUser(u);
+    if (u.role === 'admin') return STATE.users.filter(x => x.role !== 'admin');
+    if (u.role === 'area_manager') {
+        return STATE.users.filter(x =>
+            x.role !== 'admin' &&
+            (ids.includes(x.storeId) || x.id === u.id)
+        );
+    }
+    if (u.role === 'store_manager') {
+        return STATE.users.filter(x => x.storeId === u.storeId && x.role === 'sales_staff');
+    }
+    return [];
+}
+
+// New: find which store (if any) an area manager punched into today
+export function todayStoreIdFor(userId, attendance, dateStr) {
+    const rec = attendance.find(a => a.userId === userId && a.date === dateStr);
+    return rec ? rec.storeId : null;
 }
 
 export function storeName(id) { const s = STATE.stores.find(x => x.id === id); return s ? s.name : '—'; }

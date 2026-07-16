@@ -1,6 +1,6 @@
 import {STATE} from './config.js';
 import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel} from './helpers.js';
-import {storeName, userName, storesForUser, storeIdsForUser, employeesForUser} from './services.js';
+import {storeName, userName, storesForUser, storeIdsForUser, employeesForUser, teamForUser } from './services.js';
 import {
     todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
 } from './app.js';
@@ -178,17 +178,18 @@ export function renderReportRows(rep) {
     return `<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-/* Page Routers Template Parsers */
 export function renderDashboard() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
     const canDecide = u.role !== 'sales_staff';
-    const scopedStaff = STATE.users.filter(x => ids.includes(x.storeId));
+
+    // CHANGED: use teamForUser so area managers count in Team/Present/Late stats
+    const scopedStaff = teamForUser(u);
     const scopedStaffIds = new Set(scopedStaff.map(s => s.id));
-    // Count only in-scope staff so an area manager's own punch doesn't skew the team percentage.
     const todaysAtt = STATE.attendance.filter(a => scopedStaffIds.has(a.userId) && a.date === today && isPunchCountable(a));
     const presentCount = todaysAtt.length;
     const lateCount = todaysAtt.filter(a => a.late).length;
     const attPct = scopedStaff.length ? Math.round(presentCount / scopedStaff.length * 100) : 0;
+
     const todaysTasks = STATE.taskInstances.filter(i => ids.includes(i.storeId) && i.date === today);
     const tasksDone = todaysTasks.filter(t => t.completed).length;
     const taskPct = todaysTasks.length ? Math.round(tasksDone / todaysTasks.length * 100) : 0;
@@ -202,6 +203,7 @@ export function renderDashboard() {
         personalPunch = `<div class="section-title">Your Punch<span class="hint">Today · ${hint}</span></div>${punchWidget}`;
     }
 
+    // CHANGED: highlight store row + AM badge when an area manager is punched in there today
     const storeRows = storesForUser(u).map(s => {
         const staff = STATE.users.filter(x => x.storeId === s.id);
         const staffIds = new Set(staff.map(x => x.id));
@@ -209,7 +211,18 @@ export function renderDashboard() {
         const pct = staff.length ? Math.round(att.length / staff.length * 100) : 0;
         const tks = STATE.taskInstances.filter(t => t.storeId === s.id && t.date === today);
         const tdone = tks.filter(t => t.completed).length;
-        return `<tr><td><b>${esc(s.name)}</b></td><td>${staff.length}</td><td>${att.length}/${staff.length} <span class="text-faint">(${pct}%)</span></td>
+
+        const amRecord = STATE.attendance.find(a =>
+            a.storeId === s.id && a.date === today && isPunchCountable(a) &&
+            STATE.users.some(x => x.id === a.userId && x.role === 'area_manager')
+        );
+        const amUser = amRecord ? STATE.users.find(x => x.id === amRecord.userId) : null;
+        const rowAttr = amRecord ? ' class="row-am-present"' : '';
+        const amBadge = amRecord
+            ? `<span class="am-badge" title="Area Manager present: ${esc(amUser ? amUser.name : '')}">🧑‍💼</span>`
+            : '';
+
+        return `<tr${rowAttr}><td><b>${esc(s.name)}</b>${amBadge}</td><td>${staff.length}</td><td>${att.length}/${staff.length} <span class="text-faint">(${pct}%)</span></td>
       <td>${att.filter(a => a.late).length}</td><td>${tdone}/${tks.length}</td></tr>`;
     }).join('');
 
@@ -235,27 +248,102 @@ export function renderDashboard() {
 }
 
 export function renderAttendancePage() {
-    const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
+    const u = STATE.user, today = todayStr();
     let html = '';
     html += renderPunchWidget();
-    const staffScope = u.role === 'sales_staff' ? [u] : STATE.users.filter(x => ids.includes(x.storeId) && x.role !== 'admin' && x.role !== 'area_manager');
-    const rows = staffScope.map(s => {
+
+    if (u.role === 'sales_staff') {
+        const rec = STATE.attendance.find(a => a.userId === u.id && a.date === today);
+        const show = rec && !isPunchRejected(rec);
+        let pill = '<span class="pill pill-absent">Absent</span>';
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
+        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+        html += `
+      <div class="section-title">Your record today<span class="hint">${fmtDate(today)}</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Store</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+      <tbody><tr><td><b>${esc(u.name)}</b><div class="badge-role">${esc(roleLabel(u.role))}</div></td><td>${esc(storeName(u.storeId))}</td>
+      <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr></tbody></table></div>
+      `;
+        const rep = monthlyReport(u.id, STATE.month);
+        html += renderMonthPicker() + renderReportSummary(rep) + renderReportRows(rep);
+        return html;
+    }
+
+    // Managers/admin/area-manager view: filterable roster INCLUDING area managers
+    const allStores = storesForUser(u);
+    const team = teamForUser(u); // now includes area managers
+
+    if (!STATE.attendanceFilterStoreIds) STATE.attendanceFilterStoreIds = [];
+    if (!STATE.attendanceFilterStaffIds) STATE.attendanceFilterStaffIds = [];
+    const selStoreIds = STATE.attendanceFilterStoreIds;
+
+    const staffByStore = selStoreIds.length ? team.filter(x => {
+        if (x.role === 'area_manager') {
+            const rec = STATE.attendance.find(a => a.userId === x.id && a.date === today);
+            const amTodayStore = rec ? rec.storeId : null;
+            return (amTodayStore && selStoreIds.includes(amTodayStore)) ||
+                (x.storeIds || []).some(sid => selStoreIds.includes(sid));
+        }
+        return selStoreIds.includes(x.storeId);
+    }) : team;
+
+    const validStaffIds = new Set(staffByStore.map(x => x.id));
+    STATE.attendanceFilterStaffIds = STATE.attendanceFilterStaffIds.filter(id => validStaffIds.has(id));
+    const selStaffIds = STATE.attendanceFilterStaffIds;
+    const displayStaff = selStaffIds.length ? staffByStore.filter(x => selStaffIds.includes(x.id)) : staffByStore;
+
+    const rows = displayStaff.map(s => {
         const rec = STATE.attendance.find(a => a.userId === s.id && a.date === today);
         const show = rec && !isPunchRejected(rec);
         let pill = '<span class="pill pill-absent">Absent</span>';
-        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>'; else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
-        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${esc(storeName(s.storeId))}</td>
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
+        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+
+        const storeLabel = s.role === 'area_manager'
+            ? (rec ? `${esc(storeName(rec.storeId))} <span class="badge-role">AM</span>` : `${(s.storeIds || []).map(storeName).join(', ') || '—'} <span class="badge-role">AM</span>`)
+            : esc(storeName(s.storeId));
+
+        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${storeLabel}</td>
       <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr>`;
     }).join('');
+
+    // Filter bar (same pattern as Reports)
+    let storeBtnLabel = "All Stores";
+    if (selStoreIds.length > 0) {
+        storeBtnLabel = selStoreIds.map(storeName).filter(Boolean).join(', ');
+        if (storeBtnLabel.length > 25) storeBtnLabel = `${selStoreIds.length} stores selected`;
+    }
+    const storeOptions = allStores.map(st => {
+        const checked = selStoreIds.includes(st.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="att-store-checkbox" value="${st.id}" ${checked}>${esc(st.name)}</label>`;
+    }).join('');
+
+    let staffBtnLabel = "All Staff";
+    if (selStaffIds.length > 0) {
+        staffBtnLabel = selStaffIds.map(id => { const s = staffByStore.find(x => x.id === id); return s ? s.name : ''; }).filter(Boolean).join(', ');
+        if (staffBtnLabel.length > 25) staffBtnLabel = `${selStaffIds.length} staff selected`;
+    }
+    const staffOptions = staffByStore.map(s => {
+        const checked = selStaffIds.includes(s.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="att-staff-checkbox" value="${s.id}" ${checked}>${esc(s.name)}</label>`;
+    }).join('');
+
     html += `
-  <div class="section-title">${u.role === 'sales_staff' ? 'Your record today' : "Today's Roster"}<span class="hint">${fmtDate(today)}</span></div>
+  <div class="filter-bar">
+      <div style="font-size:12px;color:var(--text-soft);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Filter:</div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'attStore' ? 'open' : ''}" id="attStoreDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="attStore">${esc(storeBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">${storeOptions || '<div class="empty-note">No stores available</div>'}</div>
+      </div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'attStaff' ? 'open' : ''}" id="attStaffDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="attStaff">${esc(staffBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">${staffOptions || '<div class="empty-note">No staff in scope</div>'}</div>
+      </div>
+  </div>
+  <div class="section-title">Today's Roster<span class="hint">${fmtDate(today)}</span></div>
   <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Store</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
   <tbody>${rows || '<tr><td colspan="5" class="empty-note">No one in scope.</td></tr>'}</tbody></table></div>
   `;
-    if (u.role === 'sales_staff') {
-        const rep = monthlyReport(u.id, STATE.month);
-        html += renderMonthPicker() + renderReportSummary(rep) + renderReportRows(rep);
-    }
     return html;
 }
 
@@ -360,7 +448,7 @@ export function renderLeavePage() {
 export function renderReportsPage() {
     const u = STATE.user;
     const allStores = storesForUser(u);
-    const staff = employeesForUser(u).filter(x => x.role === 'sales_staff' || x.role === 'store_manager');
+    const staff = teamForUser(u);
 
     // Safe initialization
     if (!STATE.reportFilterStoreIds) STATE.reportFilterStoreIds = [];
@@ -465,22 +553,65 @@ export function renderReportsPage() {
 }
 
 export function renderTeamPage() {
-    const rows = STATE.users
-        .filter(u => u.role !== 'admin')
-        .map(u => `
+    const u = STATE.user;
+    const allStores = storesForUser(u);
+    const team = teamForUser(u); // includes area managers already
+
+    if (!STATE.teamFilterStoreIds) STATE.teamFilterStoreIds = [];
+    if (!STATE.teamFilterStaffIds) STATE.teamFilterStaffIds = [];
+    const selStoreIds = STATE.teamFilterStoreIds;
+
+    const byStore = selStoreIds.length ? team.filter(x => x.role === 'area_manager'
+        ? (x.storeIds || []).some(sid => selStoreIds.includes(sid))
+        : selStoreIds.includes(x.storeId)) : team;
+
+    const validIds = new Set(byStore.map(x => x.id));
+    STATE.teamFilterStaffIds = STATE.teamFilterStaffIds.filter(id => validIds.has(id));
+    const selStaffIds = STATE.teamFilterStaffIds;
+    const displayed = selStaffIds.length ? byStore.filter(x => selStaffIds.includes(x.id)) : byStore;
+
+    const rows = displayed.map(u2 => `
         <tr>
-          <td>
-            <b>${esc(u.name)}</b>
-            <div class="badge-role">${esc(u.email)}</div>
-          </td>
-          <td>${esc(roleLabel(u.role))}</td>
-          <td>${u.role === 'area_manager' ? (u.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u.storeId))}</td>
-          <td>${u.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
-          <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u.id}">Edit</button></td>
+          <td><b>${esc(u2.name)}</b><div class="badge-role">${esc(u2.email)}</div></td>
+          <td>${esc(roleLabel(u2.role))}</td>
+          <td>${u2.role === 'area_manager' ? (u2.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u2.storeId))}</td>
+          <td>${u2.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
+          <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u2.id}">Edit</button></td>
         </tr>`).join('');
 
+    let storeBtnLabel = "All Stores";
+    if (selStoreIds.length > 0) {
+        storeBtnLabel = selStoreIds.map(storeName).filter(Boolean).join(', ');
+        if (storeBtnLabel.length > 25) storeBtnLabel = `${selStoreIds.length} stores selected`;
+    }
+    const storeOptions = allStores.map(st => {
+        const checked = selStoreIds.includes(st.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="team-store-checkbox" value="${st.id}" ${checked}>${esc(st.name)}</label>`;
+    }).join('');
+
+    let staffBtnLabel = "All Staff";
+    if (selStaffIds.length > 0) {
+        staffBtnLabel = selStaffIds.map(id => { const s = byStore.find(x => x.id === id); return s ? s.name : ''; }).filter(Boolean).join(', ');
+        if (staffBtnLabel.length > 25) staffBtnLabel = `${selStaffIds.length} staff selected`;
+    }
+    const staffOptions = byStore.map(s => {
+        const checked = selStaffIds.includes(s.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="team-staff-checkbox" value="${s.id}" ${checked}>${esc(s.name)}</label>`;
+    }).join('');
+
     return `
-      <div class="section-title">All Employees<span class="hint">${STATE.users.filter(u => u.role !== 'admin').length} people</span></div>
+      <div class="filter-bar">
+          <div style="font-size:12px;color:var(--text-soft);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Filter:</div>
+          <div class="multiselect-dropdown ${STATE.activeDropdown === 'teamStore' ? 'open' : ''}" id="teamStoreDropdown">
+              <div class="multiselect-dropdown-btn" data-dropdown-toggle="teamStore">${esc(storeBtnLabel)}</div>
+              <div class="multiselect-dropdown-content">${storeOptions || '<div class="empty-note">No stores available</div>'}</div>
+          </div>
+          <div class="multiselect-dropdown ${STATE.activeDropdown === 'teamStaff' ? 'open' : ''}" id="teamStaffDropdown">
+              <div class="multiselect-dropdown-btn" data-dropdown-toggle="teamStaff">${esc(staffBtnLabel)}</div>
+              <div class="multiselect-dropdown-content">${staffOptions || '<div class="empty-note">No staff in scope</div>'}</div>
+          </div>
+      </div>
+      <div class="section-title">All Employees<span class="hint">${displayed.length} people</span></div>
       <button class="btn btn-amber btn-sm btn-block" id="addEmployeeBtn">+ Add employee</button>
       <div class="table-wrap mobile-table-cards" style="margin-top:14px;">
         <table>

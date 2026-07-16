@@ -55,7 +55,41 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.use('/api', authMiddleware);
 
+// Sanitized users endpoint — strips passwords before sending
+app.get('/api/users', async (req, res) => {
+  try {
+    const record = await DataModel.findOne({ key: 'users' });
+    const users = record ? record.value : [];
+    const safe = users.map(({ password, ...rest }) => rest); // strip password
+    return res.json(safe);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Login endpoint — verifies credentials server-side, never exposes password list
+const bcrypt = require('bcryptjs');
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const record = await DataModel.findOne({ key: 'users' });
+    const users = record ? record.value : [];
+    const u = users.find(x => x.email.toLowerCase() === (email || '').trim().toLowerCase() && x.active !== false);
+    if (!u) return res.status(401).json({ error: 'Invalid credentials' });
+    const match = await bcrypt.compare(password, u.password);
+    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+    const { password: _pw, ...safeUser } = u;
+    return res.json(safeUser);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/storage/:key', async (req, res) => {
+  if (req.params.key === 'users') {
+    return res.status(403).json({ error: 'Use /api/users instead' });
+  }
   try {
     const record = await DataModel.findOne({ key: req.params.key });
     return res.json(record ? record.value : null);
@@ -68,10 +102,19 @@ app.post('/api/storage/:key', async (req, res) => {
   if (req.body.value === undefined || req.body.value === null) {
     return res.status(400).json({ error: 'value is required' });
   }
+  let value = req.body.value;
+  if (req.params.key === 'users' && Array.isArray(value)) {
+    value = await Promise.all(value.map(async u => {
+      if (u.password && !u.password.startsWith('$2')) { // not already hashed
+        u.password = await bcrypt.hash(u.password, 10);
+      }
+      return u;
+    }));
+  }
   try {
     await DataModel.findOneAndUpdate(
         { key: req.params.key },
-        { value: req.body.value },
+        { value },
         { upsert: true, new: true }
     );
     return res.json({ success: true });
