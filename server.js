@@ -43,8 +43,8 @@ const authMiddleware = (req, res, next) => {
 
 // Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('Connected to MongoDB Atlas'))
-  .catch(err => console.error('Database connection error:', err));
+    .then(() => console.log('Connected to MongoDB Atlas'))
+    .catch(err => console.error('Database connection error:', err));
 
 const DataSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
@@ -72,9 +72,9 @@ app.post('/api/storage/:key', async (req, res) => {
   }
   try {
     await DataModel.findOneAndUpdate(
-      { key: req.params.key },
-      { value: req.body.value },
-      { upsert: true, new: true }
+        { key: req.params.key },
+        { value: req.body.value },
+        { upsert: true, new: true }
     );
     return res.json({ success: true });
   } catch (err) {
