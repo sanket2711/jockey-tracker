@@ -20,8 +20,8 @@ export const STATE = {
     activeDropdown: null
 };
 
-export const BACKEND_API_URL = "https://jockey-tracker.onrender.com";
+export const BACKEND_API_URL = "https://jockey-tracker-dev.onrender.com";
 export const SHIFT_START_MIN = 9 * 60 + 30; // keep as global fallback
 export const GRACE_MIN = 15;
 export const RADIUS_M = 100;
-export const API_KEY= "ab55035076cb427d5a74e9a0d842791b";
+export const API_KEY= "dev-ab55076cb427d5a74e9a0d842791b";

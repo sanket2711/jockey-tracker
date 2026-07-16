@@ -11,7 +11,8 @@ const allowedOrigins = [
   'https://jockey-tracker-three.vercel.app',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'http://localhost:5500'
+  'http://localhost:5500',
+  'https://jockey-tracker-dev.vercel.app/'
 ].filter(Boolean);
 
 app.use(cors({
