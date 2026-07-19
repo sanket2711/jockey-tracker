@@ -223,7 +223,8 @@ function attachAppEvents() {
     let punchStoreSel = document.getElementById('punchStore');
     if (punchStoreSel) {
         punchStoreSel.addEventListener('change', () => {
-            STATE.punchStoreId = punchStoreSel.value;
+            STATE.punchStoreId = punchStoreSel.value || null;
+            render();
         });
     }
 
@@ -261,7 +262,46 @@ function attachAppEvents() {
     const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
-    const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
+    const manualPunchBtn = document.getElementById('manualPunchBtn');
+    if (manualPunchBtn) manualPunchBtn.addEventListener('click', async () => {
+        const u = STATE.user;
+
+        // Store validation — same message pattern as handlePunchIn
+        const storeSel = document.getElementById('punchStore');
+        const storeId = u.storeId || (storeSel ? storeSel.value : STATE.punchStoreId);
+        const store = STATE.stores.find(s => s.id === storeId);
+        if (!store) {
+            STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.';
+            STATE.punchOk = false;
+            render();
+            return;
+        }
+
+        // Shift validation — identical message to handlePunchIn
+        const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
+        if (!shiftNumber) {
+            STATE.punchStatus = 'Please select a shift before punching in.';
+            STATE.punchOk = false;
+            render();
+            return;
+        }
+
+        // Geolocation — same "Getting location…" state as regular punch-in
+        STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
+
+        try {
+            const pos = await geoOnce();
+            const { latitude, longitude, accuracy } = pos.coords;
+            const loc = { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) };
+            STATE.punchStatus = ''; STATE.punchOk = null; render();
+            manualPunchModal(render, showToast, uid, loc, storeId, shiftNumber);
+        } catch (err) {
+            STATE.punchStatus = 'Location error: ' + (err.message || 'denied.');
+            STATE.punchOk = false;
+            render();
+        }
+    });
+
     punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
 
     document.querySelectorAll('[data-punch-approve]').forEach(el => el.addEventListener('click', async () => {

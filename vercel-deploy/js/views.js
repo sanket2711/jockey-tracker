@@ -6,7 +6,7 @@ import {
 } from './app.js';
 
 export function renderLogin() {
-    const demo = [['Admin / Owner', 'sanketbaheti1@gmail.com', 'admin123'], ['Area Manager', 'dinesh.area@sge.demo', 'area123'], ['Store Manager', 'sundar.manager@sge.demo', 'manager123'], ['Sales Staff', 'adarsh@sge.demo', 'staff123'],];
+    const demo = [['Admin / Owner', 'sanketbaheti1@gmail.com', 'admin123'], ['Area Manager', 'dinesh.area@sge.demo', 'area123'], ['Store Manager', 'sundar.manager@sge.demo', 'manager123'], ['Sales Staff', 'staff1@sge.demo', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
@@ -60,18 +60,26 @@ export function pageSubtitle(u) {
 export function renderPunchWidget() {
     const u = STATE.user;
     const rec = todayRecordFor(u.id);
-    // Stores this user can punch against: single-store staff/managers use their assigned store;
-    // area managers choose from the stores they oversee. Anyone else (e.g. owner) gets no widget.
     const punchStores = u.storeId ? STATE.stores.filter(s => s.id === u.storeId) : (u.role === 'area_manager' ? storesForUser(u) : []);
     if (!punchStores.length) return '';
-    // Once punched (or pending), the store is locked to that record; otherwise honor the picker.
+    const hasMultipleStores = punchStores.length > 1;
+    const showPicker = !rec && !u.storeId && hasMultipleStores;
+
+    // Single-store case (u.storeId set, OR area manager with exactly one store): auto-select it
+    const singleStoreId = !hasMultipleStores ? punchStores[0].id : null;
+
     const savedId = STATE.punchStoreId && punchStores.some(s => s.id === STATE.punchStoreId) ? STATE.punchStoreId : null;
-    const activeStoreId = rec ? rec.storeId : (savedId || punchStores[0].id);
-    const store = STATE.stores.find(s => s.id === activeStoreId);
-    // Show the picker for store-less users (area managers) until they've punched for the day.
-    const showPicker = !rec && !u.storeId;
-    const storeLine = showPicker ? `<select class="punch-store-select" id="punchStore">${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
-       <div class="punch-store">within ${RADIUS_M}m of the selected store</div>` : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
+    const activeStoreId = rec ? rec.storeId : (singleStoreId || savedId); // no fallback to [0] when multiple stores exist
+    const store = activeStoreId ? STATE.stores.find(s => s.id === activeStoreId) : null;
+
+    const storeLine = showPicker
+        ? `<select class="punch-store-select" id="punchStore">
+             <option value="" disabled ${!activeStoreId ? 'selected' : ''}>Select a store</option>
+             ${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+           </select>
+           <div class="punch-store">within ${RADIUS_M}m of the selected store</div>`
+        : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
+
     const now = new Date();
     let shiftSelectorHtml = '';
     if (!rec && store) {
@@ -91,20 +99,20 @@ export function renderPunchWidget() {
                       </label>
                     </div>
       </div>`;
+    } else if (!rec && showPicker && !store) {
+        // Only relevant when area manager has multiple stores and hasn't picked one
+        shiftSelectorHtml = `<div class="punch-shift-row"><div class="punch-shift-label" style="color:var(--text-soft);">Select a store to choose your shift</div></div>`;
     }
     let btnHtml,
         statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
     const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
     if (isPunchPending(rec)) {
-        // Manual punch-in submitted and awaiting a manager's decision.
         btnHtml = `<button class="punch-btn" disabled>Awaiting Approval</button>`;
     } else if (!isPunchCountable(rec)) {
-        // No valid check-in yet today (never punched, or previous manual request was rejected).
         btnHtml = `<button class="punch-btn" id="punchInBtn">Punch In</button>${manualLink}`;
     } else if (!rec.checkOutTime) {
         btnHtml = `<button class="punch-btn out" id="punchOutBtn">Punch Out</button>`;
     } else {
-        // Already checked out — punch-out stays available so the last one wins.
         btnHtml = `<button class="punch-btn out" id="punchOutBtn">Update Punch Out</button>`;
     }
 
@@ -855,29 +863,28 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
     });
 }
 
-export function manualPunchModal(triggerRender, showToast, uidGenerator) {
+export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, storeId, shiftNumber) {
     const u = STATE.user;
-    // Area managers (no fixed store) choose which store the missed punch was at.
-    const storeChoices = u.storeId ? [] : (u.role === 'area_manager' ? storesForUser(u) : []);
-    const storeField = storeChoices.length ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>` : '';
-    const shiftField = `<div class="field" ><label for="manualShift">Shift</label>
-        <select id="manualShift" required>
-          <option value="" disabled selected>Select a shift</option>
-          <option value="1">Shift 1</option>
-          <option value="2">Shift 2</option>
-        </select>
-      </div>`;
+    const store = STATE.stores.find(s => s.id === storeId);
+    const shiftLabel = shiftNumber === 2 ? 'Shift 2' : 'Shift 1';
+
     const content = `
     <h3>Request Manual Punch-In</h3>
     <p style="font-size:12.5px;color:var(--text-soft);margin:8px 0 14px;">
-      Missed punching in today? Enter your actual arrival time and a reason. This is sent to your
+      Missed punching in today? Enter your actual arrival time and reason for being late. This is sent to your
       store manager / area manager / owner for approval and only counts once approved.
     </p>
+    <div class="field">
+      <label>Store</label>
+      <div class="static-value">${esc(store ? store.name : '—')}</div>
+    </div>
+    <div class="field">
+      <label>Shift</label>
+      <div class="static-value">${esc(shiftLabel)}</div>
+    </div>
     <form id="manualPunchForm">
-      ${storeField}
-      ${shiftField}
       <div class="field"><label>Arrival time (today)</label><input type="time" id="manualTime" required></div>
-      <div class="field"><label>Reason for missing punch-in</label><textarea id="manualReason" rows="2" required placeholder="e.g. Phone battery died, GPS not working…"></textarea></div>
+      <div class="field"><label>Reason for being late</label><textarea id="manualReason" rows="2" required placeholder="e.g. Traffic delay, phone battery died…"></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">Submit for approval</button>
         <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
@@ -891,21 +898,9 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
 
     document.getElementById('manualPunchForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const timeVal = document.getElementById('manualTime').value;      // "HH:MM"
+        const timeVal = document.getElementById('manualTime').value;
         const reason = document.getElementById('manualReason').value.trim();
-        const storeSel = document.getElementById('manualStore');
-        const storeId = storeSel ? storeSel.value : u.storeId;
-        const shiftSel = document.getElementById('manualShift');
-        const shiftNumber = shiftSel ? (parseInt(shiftSel.value, 10) === 2 ? 2 : 1) : 1;
         if (!timeVal || !reason) return;
-        if (!shiftSel) {
-            alert('select a shift for the manual punch-in');
-            return;
-        }
-        if (!storeId) {
-            alert('Select a store for the manual punch-in.');
-            return;
-        }
 
         const now = new Date();
         const [hh, mm] = timeVal.split(':').map(Number);
@@ -918,22 +913,20 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
         const {localDateStr, isLateAt} = await import('./helpers.js');
         const {persistAttendance} = await import('./services.js');
         const date = localDateStr(now);
-        const store = STATE.stores.find(s => s.id === storeId);
 
-        // Replace any rejected request for today so a fresh one can be raised.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
 
         STATE.attendance.push({
             id: uidGenerator(),
             userId: u.id,
-            storeId,
+            storeId,           // from punch widget, not modal input
             date,
             checkInTime: dt.toISOString(),
-            checkInLoc: null,
+            checkInLoc: loc || null,
             checkOutTime: null,
             checkOutLoc: null,
             checkOutHistory: [],
-            shift: shiftNumber,
+            shift: shiftNumber, // from punch widget, not modal input
             late: isLateAt(dt, store, shiftNumber),
             manual: true,
             manualReason: reason,
