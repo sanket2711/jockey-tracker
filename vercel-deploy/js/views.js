@@ -1,6 +1,14 @@
 import {STATE} from './config.js';
 import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel} from './helpers.js';
-import {storeName, userName, storesForUser, storeIdsForUser, employeesForUser, teamForUser } from './services.js';
+import {
+    storeName,
+    userName,
+    storesForUser,
+    storeIdsForUser,
+    employeesForUser,
+    teamForUser,
+    isApproverForRecord
+} from './services.js';
 import {
     todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
 } from './app.js';
@@ -60,49 +68,41 @@ export function pageSubtitle(u) {
 export function renderPunchWidget() {
     const u = STATE.user;
     const rec = todayRecordFor(u.id);
-    const punchStores = u.storeId ? STATE.stores.filter(s => s.id === u.storeId) : (u.role === 'area_manager' ? storesForUser(u) : []);
-    if (!punchStores.length) return '';
-    const hasMultipleStores = punchStores.length > 1;
-    const showPicker = !rec && !u.storeId && hasMultipleStores;
+    const activeRec = (rec && !isPunchRejected(rec)) ? rec : null;
+    const isEligible = !!u.storeId || u.role === 'area_manager';
+    if (!isEligible) return '';
 
-    // Single-store case (u.storeId set, OR area manager with exactly one store): auto-select it
-    const singleStoreId = !hasMultipleStores ? punchStores[0].id : null;
+    // Store is never picked manually — detected via GPS at punch time.
+    const punchedStore = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
+    const homeStore = u.storeId ? STATE.stores.find(s => s.id === u.storeId) : null;
 
-    const savedId = STATE.punchStoreId && punchStores.some(s => s.id === STATE.punchStoreId) ? STATE.punchStoreId : null;
-    const activeStoreId = rec ? rec.storeId : (singleStoreId || savedId); // no fallback to [0] when multiple stores exist
-    const store = activeStoreId ? STATE.stores.find(s => s.id === activeStoreId) : null;
-
-    const storeLine = showPicker
-        ? `<select class="punch-store-select" id="punchStore">
-             <option value="" disabled ${!activeStoreId ? 'selected' : ''}>Select a store</option>
-             ${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-           </select>
-           <div class="punch-store">within ${RADIUS_M}m of the selected store</div>`
-        : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
+    const storeLine = punchedStore
+        ? `<div class="punch-store">${esc(punchedStore.name)}${rec.autoRouted ? ' <span class="pill pill-pending">Cross-store</span>' : ''}</div>`
+        : `<div class="punch-store">Store detected automatically on punch-in <span class="text-faint">(within ${RADIUS_M}m)</span></div>`;
 
     const now = new Date();
     let shiftSelectorHtml = '';
-    if (!rec && store) {
-        const s1 = `${store.shift1Start || '—'} – ${store.shift1End || '—'}`;
-        const s2 = `${store.shift2Start || '—'} – ${store.shift2End || '—'}`;
+    if (!activeRec) {
+        // Show shift timings from the home store if known; otherwise generic labels
+        // (area managers don't have a fixed store, so exact times are unknown pre-punch).
+        const s1 = homeStore ? `${homeStore.shift1Start || '—'} – ${homeStore.shift1End || '—'}` : null;
+        const s2 = homeStore ? `${homeStore.shift2Start || '—'} – ${homeStore.shift2End || '—'}` : null;
         shiftSelectorHtml = `
        <div class="punch-shift-row">
-       <div class="punch-shift-label">Shift</div>
+<!--       <div class="punch-shift-label">Shift</div>-->
         <div class="punch-shift-radio-group" role="radiogroup" aria-label="Select shift">
                       <label class="punch-shift-radio">
                         <input type="radio" name="punchShift" value="1" ${STATE.punchShift === 1 ? 'checked' : ''}>
-                        <span>Shift 1 <small>(${s1})</small></span>
+                        <span>Shift 1${s1 ? ` <small>(${s1})</small>` : ''}</span>
                       </label>
                       <label class="punch-shift-radio">
                         <input type="radio" name="punchShift" value="2" ${STATE.punchShift === 2 ? 'checked' : ''}>
-                        <span>Shift 2 <small>(${s2})</small></span>
+                        <span>Shift 2${s2 ? ` <small>(${s2})</small>` : ''}</span>
                       </label>
                     </div>
       </div>`;
-    } else if (!rec && showPicker && !store) {
-        // Only relevant when area manager has multiple stores and hasn't picked one
-        shiftSelectorHtml = `<div class="punch-shift-row"><div class="punch-shift-label" style="color:var(--text-soft);">Select a store to choose your shift</div></div>`;
     }
+
     let btnHtml,
         statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
     const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
@@ -123,9 +123,7 @@ export function renderPunchWidget() {
     return `
   <div class="punch-wrap">
     <div class="punch-card">
-      <div class="punch-time mono">${now.toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-    })}</div>
+      <div class="punch-time mono">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
       <div class="punch-date">${fmtDate(todayStr())}</div>
       ${storeLine}
       ${shiftSelectorHtml}
@@ -134,7 +132,7 @@ export function renderPunchWidget() {
     </div>
     <div class="ticket">
       <h3>Today's Punch</h3>
-      ${!u.storeId ? `<div class="ticket-row"><span class="lbl">Store</span><span class="val">${store ? esc(store.name) : '—'}</span></div>` : ''}
+      <div class="ticket-row"><span class="lbl">Store</span><span class="val">${punchedStore ? esc(punchedStore.name) : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec && !isPunchRejected(rec) ? fmtTime(rec.checkInTime) + (rec.manual ? ' <span class="pill pill-pending">Manual</span>' : '') : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Status</span><span class="val">${statusVal}</span></div>
       <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${isPunchCountable(rec) && rec.checkOutTime ? fmtTime(rec.checkOutTime) + (outCount > 1 ? ` <span class="text-faint">(×${outCount})</span>` : '') : '—'}</span></div>
@@ -146,10 +144,13 @@ export function renderPunchWidget() {
 
 export function renderPunchApprovalTable(list) {
     const rows = list.slice().sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || '')).map(r => `
-    <tr><td><b>${esc(userName(r.userId))}</b><div class="badge-role">${esc(storeName(r.storeId))}</div></td>
+    <tr><td><b>${esc(userName(r.userId))}</b><div class="badge-role">
+        ${esc(storeName(r.storeId))}${r.homeStoreId && r.homeStoreId !== r.storeId ? ` <span class="text-faint">(home: ${esc(storeName(r.homeStoreId))})</span>` : ''}
+        ${r.autoRouted ? ' <span class="pill pill-pending">Cross-store</span>' : ''}
+      </div></td>
     <td>${fmtDateShort(r.date)}</td>
     <td>${fmtTime(r.checkInTime)} ${r.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>'}</td>
-    <td>${esc(r.manualReason || '—')}</td>
+    <td>${esc(r.manualReason || (r.autoRouted ? 'Punched in outside assigned store' : '—'))}</td>
     <td><button class="btn btn-sm btn-primary" data-punch-approve="${r.id}">Approve</button> <button class="btn btn-sm btn-danger" data-punch-reject="${r.id}">Reject</button></td>
     </tr>`).join('');
     return `<div class="table-wrap"><table><thead><tr><th>Employee</th><th>Date</th><th>Claimed check-in</th><th>Reason</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -190,7 +191,6 @@ export function renderDashboard() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
     const canDecide = u.role !== 'sales_staff';
 
-    // CHANGED: use teamForUser so area managers count in Team/Present/Late stats
     const scopedStaff = teamForUser(u);
     const scopedStaffIds = new Set(scopedStaff.map(s => s.id));
     const todaysAtt = STATE.attendance.filter(a => scopedStaffIds.has(a.userId) && a.date === today && isPunchCountable(a));
@@ -201,8 +201,9 @@ export function renderDashboard() {
     const todaysTasks = STATE.taskInstances.filter(i => ids.includes(i.storeId) && i.date === today);
     const tasksDone = todaysTasks.filter(t => t.completed).length;
     const taskPct = todaysTasks.length ? Math.round(tasksDone / todaysTasks.length * 100) : 0;
+    // const pendingLeaves = canDecide ? STATE.leaves.filter(l => l.status === 'pending' && l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId))) : [];
+    const pendingPunches = canDecide ? STATE.attendance.filter(a => a.approvalStatus === 'pending' && a.userId !== u.id && (u.role === 'admin' || isApproverForRecord(ids, a))) : [];
     const pendingLeaves = canDecide ? STATE.leaves.filter(l => l.status === 'pending' && l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId))) : [];
-    const pendingPunches = canDecide ? STATE.attendance.filter(a => ids.includes(a.storeId) && a.approvalStatus === 'pending' && a.userId !== u.id) : [];
 
     let personalPunch = '';
     const punchWidget = renderPunchWidget();
@@ -863,7 +864,7 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
     });
 }
 
-export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, storeId, shiftNumber) {
+export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, storeId, shiftNumber, homeStoreId) {
     const u = STATE.user;
     const store = STATE.stores.find(s => s.id === storeId);
     const shiftLabel = shiftNumber === 2 ? 'Shift 2' : 'Shift 1';
@@ -874,14 +875,8 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, st
       Missed punching in today? Enter your actual arrival time and reason for being late. This is sent to your
       store manager / area manager / owner for approval and only counts once approved.
     </p>
-    <div class="field">
-      <label>Store</label>
-      <div class="static-value">${esc(store ? store.name : '—')}</div>
-    </div>
-    <div class="field">
-      <label>Shift</label>
-      <div class="static-value">${esc(shiftLabel)}</div>
-    </div>
+    <div class="field"><label>Store (detected)</label><div class="static-value">${esc(store ? store.name : '—')}</div></div>
+    <div class="field"><label>Shift</label><div class="static-value">${esc(shiftLabel)}</div></div>
     <form id="manualPunchForm">
       <div class="field"><label>Arrival time (today)</label><input type="time" id="manualTime" required></div>
       <div class="field"><label>Reason for being late</label><textarea id="manualReason" rows="2" required placeholder="e.g. Traffic delay, phone battery died…"></textarea></div>
@@ -893,7 +888,6 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, st
   `;
 
     openModal(content);
-
     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
 
     document.getElementById('manualPunchForm').addEventListener('submit', async (e) => {
@@ -905,10 +899,7 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, st
         const now = new Date();
         const [hh, mm] = timeVal.split(':').map(Number);
         const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
-        if (dt.getTime() > now.getTime()) {
-            alert('Arrival time cannot be in the future.');
-            return;
-        }
+        if (dt.getTime() > now.getTime()) { alert('Arrival time cannot be in the future.'); return; }
 
         const {localDateStr, isLateAt} = await import('./helpers.js');
         const {persistAttendance} = await import('./services.js');
@@ -917,23 +908,14 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, st
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
 
         STATE.attendance.push({
-            id: uidGenerator(),
-            userId: u.id,
-            storeId,           // from punch widget, not modal input
-            date,
-            checkInTime: dt.toISOString(),
-            checkInLoc: loc || null,
-            checkOutTime: null,
-            checkOutLoc: null,
-            checkOutHistory: [],
-            shift: shiftNumber, // from punch widget, not modal input
-            late: isLateAt(dt, store, shiftNumber),
-            manual: true,
-            manualReason: reason,
-            approvalStatus: 'pending',
-            requestedAt: now.toISOString(),
-            decidedBy: null,
-            decidedAt: null
+            id: uidGenerator(), userId: u.id,
+            storeId, homeStoreId: homeStoreId || null,
+            date, checkInTime: dt.toISOString(), checkInLoc: loc || null,
+            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
+            shift: shiftNumber, late: isLateAt(dt, store, shiftNumber),
+            manual: true, manualReason: reason,
+            approvalStatus: 'pending', requestedAt: now.toISOString(),
+            decidedBy: null, decidedAt: null
         });
 
         await persistAttendance();

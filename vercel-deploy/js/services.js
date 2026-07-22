@@ -1,4 +1,5 @@
 import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
+import {distanceMeters} from './helpers.js';
 
 export async function saveKey(key, value, shared) {
     try {
@@ -187,3 +188,24 @@ export function todayStoreIdFor(userId, attendance, dateStr) {
 
 export function storeName(id) { const s = STATE.stores.find(x => x.id === id); return s ? s.name : '—'; }
 export function userName(id) { const u = STATE.users.find(x => x.id === id); return u ? u.name : 'Unknown'; }
+
+export function nearestStore(lat, lng) {
+    let nearest = null, nearestDist = Infinity;
+    STATE.stores.forEach(s => {
+        const d = distanceMeters(lat, lng, s.lat, s.lng);
+        if (d < nearestDist) { nearestDist = d; nearest = s; }
+    });
+    return nearest ? { store: nearest, distance: nearestDist } : null;
+}
+
+export function authorizedStoreIdsFor(u) {
+    if (u.role === 'area_manager') return u.storeIds || [];
+    if (u.storeId) return [u.storeId];
+    return [];
+}
+
+// A pending punch is visible to an approver if either the punch-location store
+// OR the employee's home store falls within the approver's scope.
+export function isApproverForRecord(approverIds, rec) {
+    return approverIds.includes(rec.storeId) || (rec.homeStoreId && approverIds.includes(rec.homeStoreId));
+}

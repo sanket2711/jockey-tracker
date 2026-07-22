@@ -3,7 +3,7 @@ import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverM
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores, loadUsersSafe, loginRequest
+    persistLeaves, persistUsers, persistStores, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -116,13 +116,21 @@ function showToast(msg) {
 
 /* Auth functions */
 async function login(email, password) {
-    const u = await loginRequest(email, password); // server verifies, no password returned
+    const u = await loginRequest(email, password);
     if (!u) return false;
     STATE.user = u;
     STATE.page = 'dashboard'; STATE.navOpen = false;
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
+    STATE.attendanceFilterStoreIds = [];
+    STATE.attendanceFilterStaffIds = [];
+    STATE.teamFilterStoreIds = [];
+    STATE.teamFilterStaffIds = [];
     STATE.activeDropdown = null;
+    STATE.punchStatus = '';
+    STATE.punchOk = null;
+    STATE.punchShift = null;
+    STATE.punchStoreId = null;
     await saveKey('session', u.id, false);
     return true;
 }
@@ -131,7 +139,15 @@ async function logout() {
     STATE.user = null;
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
+    STATE.attendanceFilterStoreIds = [];
+    STATE.attendanceFilterStaffIds = [];
+    STATE.teamFilterStoreIds = [];
+    STATE.teamFilterStaffIds = [];
     STATE.activeDropdown = null;
+    STATE.punchStatus = '';
+    STATE.punchOk = null;
+    STATE.punchShift = null;
+    STATE.punchStoreId = null;
     await saveKey('session', null, false);
     render();
 }
@@ -265,40 +281,29 @@ function attachAppEvents() {
     const manualPunchBtn = document.getElementById('manualPunchBtn');
     if (manualPunchBtn) manualPunchBtn.addEventListener('click', async () => {
         const u = STATE.user;
-
-        // Store validation — same message pattern as handlePunchIn
-        const storeSel = document.getElementById('punchStore');
-        const storeId = u.storeId || (storeSel ? storeSel.value : STATE.punchStoreId);
-        const store = STATE.stores.find(s => s.id === storeId);
-        if (!store) {
-            STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.';
-            STATE.punchOk = false;
-            render();
-            return;
-        }
-
-        // Shift validation — identical message to handlePunchIn
         const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
-        if (!shiftNumber) {
-            STATE.punchStatus = 'Please select a shift before punching in.';
-            STATE.punchOk = false;
-            render();
-            return;
-        }
+        if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
 
-        // Geolocation — same "Getting location…" state as regular punch-in
+        manualPunchBtn.disabled = true;
+        const originalText = manualPunchBtn.textContent;
+        manualPunchBtn.textContent = 'Checking location…';
         STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
 
         try {
             const pos = await geoOnce();
             const { latitude, longitude, accuracy } = pos.coords;
+            const result = nearestStore(latitude, longitude);
+            if (!result) { STATE.punchStatus = 'No stores configured.'; STATE.punchOk = false; render(); return; }
             const loc = { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) };
             STATE.punchStatus = ''; STATE.punchOk = null; render();
-            manualPunchModal(render, showToast, uid, loc, storeId, shiftNumber);
+            manualPunchModal(render, showToast, uid, loc, result.store.id, shiftNumber, u.storeId || null);
         } catch (err) {
             STATE.punchStatus = 'Location error: ' + (err.message || 'denied.');
             STATE.punchOk = false;
             render();
+        } finally {
+            manualPunchBtn.disabled = false;
+            manualPunchBtn.textContent = originalText;
         }
     });
 
@@ -511,30 +516,64 @@ function attachAppEvents() {
 async function handlePunchIn() {
     const u = STATE.user;
     const existing = todayRecordFor(u.id);
-    // Punch-in is allowed only once per day. A pending manual request or an already-recorded
-    // punch-in blocks a fresh one; a previously rejected request can be replaced.
-    if (isPunchPending(existing)) { STATE.punchStatus = 'A manual punch-in is awaiting approval.'; STATE.punchOk = false; render(); return; }
+    if (isPunchPending(existing)) { STATE.punchStatus = 'A punch-in is awaiting approval.'; STATE.punchOk = false; render(); return; }
     if (isPunchCountable(existing)) { STATE.punchStatus = 'You have already punched in today.'; STATE.punchOk = false; render(); return; }
-    // Store is fixed for single-store staff/managers; area managers pick it from the widget.
-    const sel = document.getElementById('punchStore');
-    const storeId = sel ? sel.value : u.storeId;
-    const store = STATE.stores.find(s => s.id === storeId);
-    if (!store) { STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.'; STATE.punchOk = false; render(); return; }
-    // No default shift is pre-selected — the user must explicitly pick Shift 1 or Shift 2.
+
     const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
     if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
+
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
-        const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
-        const dist = distanceMeters(latitude, longitude, store.lat, store.lng);
-        if (dist > RADIUS_M) { STATE.punchStatus = `You're ${Math.round(dist)}m away.`; STATE.punchOk = false; render(); return; }
+        const pos = await geoOnce();
+        const { latitude, longitude, accuracy } = pos.coords;
+
+        const result = nearestStore(latitude, longitude);
+        if (!result) { STATE.punchStatus = 'No stores configured.'; STATE.punchOk = false; render(); return; }
+        const { store: nearest, distance } = result;
+        if (distance > RADIUS_M) {
+            STATE.punchStatus = `You're ${Math.round(distance)}m from the nearest store (${nearest.name}).`;
+            STATE.punchOk = false; render(); return;
+        }
+
+        const authorizedIds = authorizedStoreIdsFor(u);
+        const isAuthorized = authorizedIds.includes(nearest.id);
+
         const now = new Date(), date = localDateStr(now);
-        // Clear any rejected request for today so it doesn't linger alongside the real punch.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
-        const shiftNumber = STATE.punchShift;
-        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], shift: shiftNumber, late: isLateAt(now, store, shiftNumber)  });
-        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; STATE.punchShift = null; render();
-    } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
+
+        const record = {
+            id: uid(), userId: u.id,
+            storeId: nearest.id,                  // where they actually punched in
+            homeStoreId: u.storeId || null,        // their assigned store (null for area managers)
+            date, checkInTime: now.toISOString(),
+            checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) },
+            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
+            shift: shiftNumber, late: isLateAt(now, nearest, shiftNumber)
+        };
+
+        if (isAuthorized) {
+            STATE.attendance.push(record);
+            STATE.punchStatus = `Punched in at ${nearest.name}.`;
+            STATE.punchOk = true;
+        } else {
+            record.approvalStatus = 'pending';
+            record.autoRouted = true;
+            record.requestedAt = now.toISOString();
+            record.decidedBy = null;
+            record.decidedAt = null;
+            STATE.attendance.push(record);
+            STATE.punchStatus = `You're at ${nearest.name} — outside your assigned store. Sent for manager approval.`;
+            STATE.punchOk = null;
+        }
+
+        await persistAttendance();
+        STATE.punchShift = null;
+        render();
+    } catch (err) {
+        STATE.punchStatus = 'Location error: ' + (err.message || 'denied.');
+        STATE.punchOk = false;
+        render();
+    }
 }
 
 async function handlePunchOut() {
@@ -587,10 +626,10 @@ async function init() {
     }
     STATE.stores = stores || []; STATE.users = users || []; STATE.taskTemplates = taskTemplates || [];
     STATE.attendance = attendance || []; STATE.taskInstances = taskInstances || []; STATE.leaves = leaves || [];
-    // Materialize today's checklist from active templates so staff/managers actually see tasks to tick off.
     ensureInstancesForDate(STATE.stores.map(s => s.id), todayStr());
     const sessionId = await loadKey('session', false);
     if (sessionId) { const u = STATE.users.find(x => x.id === sessionId); if (u) STATE.user = u; }
+    STATE.punchStatus = ''; STATE.punchOk = null;
     STATE.ready = true;
     render();
 }
