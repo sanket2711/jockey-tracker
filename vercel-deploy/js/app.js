@@ -10,7 +10,7 @@ import {
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
-    editEmployeeModal, editStoreModal, createTaskModal
+    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -92,7 +92,8 @@ export function monthlyReport(userId, monthDate) {
             status = 'pending';
         } else if (isPunchCountable(rec)) {
             status = rec.late ? 'late' : 'present';
-            rec.late ? late++ : present++;
+            rec.late ? late++ : null;
+            present++;
 
             const store = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
             const diffMin = computeUnderOverMinutes(rec, store);
@@ -131,6 +132,7 @@ async function login(email, password) {
     STATE.punchOk = null;
     STATE.punchShift = null;
     STATE.punchStoreId = null;
+    STATE.page = u.mustChangePassword ? 'forcePasswordChange' : 'dashboard';
     await saveKey('session', u.id, false);
     return true;
 }
@@ -162,6 +164,13 @@ export function render() {
     if (!STATE.user) {
         root.innerHTML = renderLogin();
         attachLoginEvents();
+        return;
+    }
+
+    if (STATE.user.mustChangePassword) {
+        root.innerHTML = renderForcePasswordChange();
+        const form = document.getElementById('forcePasswordForm');
+        if (form) form.addEventListener('submit', handleForcePasswordChange);
         return;
     }
 
@@ -596,6 +605,35 @@ async function handlePunchOut() {
         rec.checkOutHistory.push({ time: rec.checkOutTime, loc });
         await persistAttendance(); STATE.punchStatus = isUpdate ? `Punch-out updated (last out kept).` : `Punched out successfully.`; STATE.punchOk = true; render();
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
+}
+
+async function handleForcePasswordChange(e) {
+    e.preventDefault();
+    const u = STATE.user;
+    const newPass = document.getElementById('newPasswordInput').value;
+    const confirmPass = document.getElementById('confirmPasswordInput').value;
+    const errorEl = document.getElementById('forcePassError');
+
+    if (!newPass || newPass.length < 6) {
+        if (errorEl) errorEl.textContent = 'Password must be at least 6 characters.';
+        return;
+    }
+    if (newPass !== confirmPass) {
+        if (errorEl) errorEl.textContent = 'Passwords do not match.';
+        return;
+    }
+
+    const target = STATE.users.find(x => x.id === u.id);
+    if (target) {
+        target.password = newPass;
+        target.mustChangePassword = false;
+    }
+    u.mustChangePassword = false; // keep in-memory session user in sync
+
+    await persistUsers();
+    STATE.page = 'dashboard';
+    showToast('Password updated successfully.');
+    render();
 }
 
 let clockInterval = null;

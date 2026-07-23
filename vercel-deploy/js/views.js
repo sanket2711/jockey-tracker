@@ -790,7 +790,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
         }
 
         const newEmp = {
-            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true
+            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true, mustChangePassword: true
         };
 
         STATE.users.push(newEmp);
@@ -1041,6 +1041,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
 
         if (newPassword) {
             emp.password = newPassword;
+            emp.mustChangePassword = true;
         }
 
         const {persistUsers} = await import('./services.js');
@@ -1280,4 +1281,21 @@ export function createTaskModal(triggerRender, showToast, uidGenerator, persistT
         showToast('Task created successfully.');
         triggerRender();
     });
+}
+
+export function renderForcePasswordChange() {
+    return `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="brand-mark"><div class="brand-clock"></div><div><div class="brand-name">SHIFTLEDGER</div><div class="brand-sub">Store Ops Punch Clock</div></div></div>
+      <h1>Set a new password</h1>
+      <p class="lead">Your password was reset by an admin/manager. Please set a new password to continue.</p>
+      <div id="forcePassError" style="color:var(--alert);font-size:12.5px;margin-bottom:8px;"></div>
+      <form id="forcePasswordForm">
+        <div class="field"><label>New Password</label><input type="password" id="newPasswordInput" required minlength="6"></div>
+        <div class="field"><label>Confirm Password</label><input type="password" id="confirmPasswordInput" required minlength="6"></div>
+        <button class="btn btn-primary btn-block" type="submit">Set Password &amp; Continue</button>
+      </form>
+    </div>
+  </div>`;
 }
