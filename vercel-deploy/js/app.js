@@ -532,13 +532,16 @@ function attachAppEvents() {
     document.querySelectorAll('[data-am-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
 
     document.querySelectorAll('.roster-day-select').forEach(sel => sel.addEventListener('change', () => {
-        const cross = sel.parentElement.querySelector('.roster-cross-select');
-        if (cross) cross.style.display = sel.value === 'cross_store' ? '' : 'none';
+        const show = sel.value === 'cross_store' ? '' : 'none';
+        const storeSel = sel.parentElement.querySelector('.roster-cross-store-select');
+        const shiftSel = sel.parentElement.querySelector('.roster-cross-shift-select');
+        if (storeSel) storeSel.style.display = show;
+        if (shiftSel) shiftSel.style.display = show;
     }));
 
     document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const storeId = form.dataset.rosterStore, weekStart = form.dataset.rosterWeek, existingId = form.dataset.rosterId;
+        const storeId = form.dataset.store, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
         const staff = activeStaffForStore(storeId);
 
         const entries = staff.map(s => {
@@ -589,7 +592,7 @@ function attachAppEvents() {
 
     document.querySelectorAll('.am-roster-form').forEach(form => form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const userId = form.dataset.amUser, weekStart = form.dataset.rosterWeek, existingId = form.dataset.rosterId;
+        const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
         const days = {};
         DAY_KEYS.forEach(dk => {
             const sel = form.querySelector(`.am-roster-day-select[data-day="${dk}"]`);
@@ -781,5 +784,74 @@ async function init() {
     STATE.ready = true;
     render();
 }
+
+function collectStoreRosterEntries(form, storeId) {
+    const staff = activeStaffForStore(storeId);
+    return staff.map(s => {
+        const days = {}, cross = {};
+        DAY_KEYS.forEach(dk => {
+            const daySel = form.querySelector(`.roster-day-select[data-user="${s.id}"][data-day="${dk}"]`);
+            days[dk] = daySel ? daySel.value : '';
+            if (days[dk] === 'cross_store') {
+                const storeSel = form.querySelector(`.roster-cross-store-select[data-user="${s.id}"][data-day="${dk}"]`);
+                const shiftSel = form.querySelector(`.roster-cross-shift-select[data-user="${s.id}"][data-day="${dk}"]`);
+                cross[dk] = { storeId: storeSel ? storeSel.value : '', shiftType: shiftSel ? shiftSel.value : '' };
+            }
+        });
+        return { userId: s.id, days, cross };
+    });
+}
+
+function saveStoreRoster(form, { asDraft }) {
+    const storeId = form.dataset.store, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
+    const entries = collectStoreRosterEntries(form, storeId);
+
+    if (!asDraft) {
+        const incomplete = entries.some(en => DAY_KEYS.some(dk =>
+            !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk] || !en.cross[dk].storeId || !en.cross[dk].shiftType))
+        ));
+        if (incomplete) { alert('Please assign a value for every staff member on every day before submitting.'); return false; }
+    }
+
+    const now = new Date().toISOString();
+    if (existingId) {
+        const rec = STATE.dutyRosters.find(r => r.id === existingId);
+        rec.entries = entries;
+        if (asDraft) {
+            rec.status = 'draft'; // stays editable
+        } else {
+            rec.status = 'pending_approval';
+            rec.submittedBy = STATE.user.id; rec.submittedAt = now;
+            rec.editedBy = null; rec.editedAt = null; rec.approvedBy = null; rec.approvedAt = null;
+        }
+    } else {
+        STATE.dutyRosters.push({
+            id: uid(), type: 'store', storeId, weekStart, entries,
+            status: asDraft ? 'draft' : 'pending_approval',
+            submittedBy: asDraft ? null : STATE.user.id, submittedAt: asDraft ? null : now,
+            editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
+        });
+    }
+    return true;
+}
+
+document.querySelectorAll('[data-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
+    const form = btn.closest('.roster-form');
+    if (saveStoreRoster(form, { asDraft: true })) {
+        await persistDutyRosters();
+        showToast('Draft saved. You can continue editing anytime.');
+        render();
+    }
+}));
+
+document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (saveStoreRoster(form, { asDraft: false })) {
+        STATE.rosterEditingId = null;
+        await persistDutyRosters();
+        showToast('Roster submitted for approval.');
+        render();
+    }
+}));
 
 init();

@@ -1299,8 +1299,8 @@ const DAY_TYPE_OPTIONS = [
 const dayTypeLabel = v => (DAY_TYPE_OPTIONS.find(o => o[0] === v) || [, v])[1];
 
 function rosterStatusPill(status) {
-    const cls = { pending_approval: 'pill-pending', approved: 'pill-present', rejected: 'pill-rejected' }[status] || '';
-    const label = { pending_approval: 'Pending Approval', approved: 'Approved', rejected: 'Rejected' }[status] || status;
+    const cls = { draft: 'pill-late', pending_approval: 'pill-pending', approved: 'pill-present', rejected: 'pill-rejected' }[status] || '';
+    const label = { draft: 'Draft', pending_approval: 'Pending Approval', approved: 'Approved', rejected: 'Rejected' }[status] || status;
     return `<span class="pill ${cls}">${label}</span>`;
 }
 
@@ -1348,15 +1348,16 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
     const isAdmin = viewer.role === 'admin';
     const isStaffViewer = viewer.role === 'sales_staff';
 
-    const canCreate = isSM && !roster;
-    const canEditCorrection = (isAM || isAdmin) && roster;
+    const isDraft = roster && roster.status === 'draft';
+    const canCreateOrContinueDraft = isSM && (!roster || isDraft);
+    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft;
     const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval';
 
     let bodyHtml;
-    if (!roster) {
-        bodyHtml = canCreate
-            ? renderRosterForm(storeId, weekStart, dates, staff, null)
-            : `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
+    if (canCreateOrContinueDraft) {
+        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null);
+    } else if (!roster) {
+        bodyHtml = `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
     } else {
         const showEditable = STATE.rosterEditingId === roster.id && (isAM || isAdmin);
         if (showEditable) {
@@ -1382,6 +1383,8 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
     </div>`;
 }
 
+const CROSS_SHIFT_OPTIONS = [['shift1','Shift 1'],['shift2','Shift 2'],['half_day','Half Day']];
+
 function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
     const entryFor = userId => existingRoster ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} }) : { days: {}, cross: {} };
 
@@ -1390,20 +1393,26 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
         const cells = DAY_KEYS.map((dk, i) => {
             const dateStr = dates[i];
             const approvedLeave = approvedLeaveForDay(s.id, dateStr);
-            const locked = !!approvedLeave; // SM cannot override an approved leave day
+            const locked = !!approvedLeave;
             const currentVal = approvedLeave ? 'leave' : (entry.days[dk] || '');
-            const crossVal = entry.cross ? entry.cross[dk] : '';
+            const crossEntry = (entry.cross && entry.cross[dk]) || {}; // CHANGED: cross is now {storeId, shiftType}
             const options = DAY_TYPE_OPTIONS.map(([v, l]) => `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`).join('');
-            const storeOptions = STATE.stores.filter(x => x.id !== storeId).map(x => `<option value="${x.id}" ${crossVal === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+            const storeOptions = STATE.stores.filter(x => x.id !== storeId).map(x => `<option value="${x.id}" ${crossEntry.storeId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+            const crossShiftOptions = CROSS_SHIFT_OPTIONS.map(([v, l]) => `<option value="${v}" ${crossEntry.shiftType === v ? 'selected' : ''}>${l}</option>`).join('');
+            const showCross = currentVal === 'cross_store';
             return `
               <td>
                 <select class="roster-day-select" data-user="${s.id}" data-day="${dk}" ${locked ? 'disabled' : ''} required>
                   <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
                   ${options}
                 </select>
-                <select class="roster-cross-select" data-user="${s.id}" data-day="${dk}" style="${currentVal === 'cross_store' ? '' : 'display:none;'} margin-top:4px;">
-                  <option value="" disabled ${!crossVal ? 'selected' : ''}>Store…</option>
+                <select class="roster-cross-store-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'}margin-top:4px;">
+                  <option value="" disabled ${!crossEntry.storeId ? 'selected' : ''}>Store…</option>
                   ${storeOptions}
+                </select>
+                <select class="roster-cross-shift-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'}margin-top:4px;">
+                  <option value="" disabled ${!crossEntry.shiftType ? 'selected' : ''}>Shift…</option>
+                  ${crossShiftOptions}
                 </select>
                 ${approvedLeave ? '<div class="text-faint" style="font-size:10px;">Approved leave</div>' : ''}
               </td>`;
@@ -1412,7 +1421,7 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
     }).join('');
 
     return `
-    <form class="roster-form" data-roster-store="${storeId}" data-roster-week="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+    <form class="roster-form" data-store="${storeId}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
       <div class="table-wrap">
         <table>
           <thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
@@ -1420,7 +1429,8 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
         </table>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
-        <button type="submit" class="btn btn-primary btn-sm">${existingRoster ? 'Save Corrections' : 'Submit for Approval'}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-save-draft="1">Save Draft</button>
+        <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
         ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-roster-cancel-edit="1">Cancel</button>` : ''}
       </div>
     </form>`;
@@ -1432,18 +1442,15 @@ function renderRosterTable(roster, staff, dates) {
         const cells = DAY_KEYS.map(dk => {
             const val = entry.days[dk];
             let label = val ? dayTypeLabel(val) : '—';
-            if (val === 'cross_store' && entry.cross && entry.cross[dk]) label += ` (${esc(storeName(entry.cross[dk]))})`;
+            if (val === 'cross_store' && entry.cross && entry.cross[dk]) {
+                const c = entry.cross[dk];
+                label += ` (${esc(storeName(c.storeId))} · ${dayTypeLabel(c.shiftType)})`; // CHANGED
+            }
             return `<td>${label}</td>`;
         }).join('');
         return `<tr><td><b>${esc(s.name)}</b></td>${cells}</tr>`;
     }).join('');
-    return `
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+    return `<div class="table-wrap"><table><thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
       ${roster.submittedAt ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}${roster.editedBy ? ` · Edited by ${esc(userName(roster.editedBy))}` : ''}${roster.approvedBy ? ` · Approved by ${esc(userName(roster.approvedBy))}` : ''}</div>` : ''}`;
 }
 
@@ -1452,14 +1459,17 @@ function renderAmRosterSection(am, weekStart, dates) {
     const viewer = STATE.user;
     const isSelf = viewer.id === am.id;
     const isAdmin = viewer.role === 'admin';
-    const canCreate = isSelf && !roster;
-    const canEdit = isAdmin && roster;
+    const isDraft = roster && roster.status === 'draft';
+    const canCreateOrContinueDraft = isSelf && (!roster || isDraft);
+    const canEdit = isAdmin && roster && !isDraft;
     const canApprove = isAdmin && roster && roster.status === 'pending_approval';
     const amStores = storesForUser(am);
 
     let bodyHtml;
-    if (!roster) {
-        bodyHtml = canCreate ? renderAmRosterForm(am, weekStart, dates, null, amStores) : `<div class="empty-note">No visit plan submitted yet.</div>`;
+    if (canCreateOrContinueDraft) {
+        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores);
+    } else if (!roster) {
+        bodyHtml = `<div class="empty-note">No visit plan submitted yet.</div>`;
     } else {
         const showEditable = STATE.rosterEditingId === roster.id && isAdmin;
         if (showEditable) {
@@ -1483,19 +1493,28 @@ function renderAmRosterSection(am, weekStart, dates) {
     </div>`;
 }
 
+const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
+
 function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
-    const cells = DAY_KEYS.map((dk, i) => {
-        const val = existingRoster ? existingRoster.days[dk] : '';
+    const cells = DAY_KEYS.map(dk => {
+        const entry = existingRoster ? (existingRoster.days[dk] || {}) : {};
+        const currentVal = entry.type || '';
+        const needsStore = currentVal === 'shift1' || currentVal === 'shift2' || currentVal === 'half_day';
+        const typeOptions = AM_DAY_TYPE_OPTIONS.map(([v, l]) => `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`).join('');
+        const storeOptions = amStores.map(s => `<option value="${s.id}" ${entry.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
         return `<td>
-          <select class="am-roster-day-select" data-day="${dk}" required>
-            <option value="" disabled ${!val ? 'selected' : ''}>—</option>
-            <option value="off" ${val === 'off' ? 'selected' : ''}>Off / HQ</option>
-            ${amStores.map(s => `<option value="${s.id}" ${val === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          <select class="am-roster-type-select" data-day="${dk}" required>
+            <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
+            ${typeOptions}
+          </select>
+          <select class="am-roster-store-select" data-day="${dk}" style="margin-top:4px;${needsStore ? '' : 'display:none;'}">
+            <option value="" disabled ${!entry.storeId ? 'selected' : ''}>Store…</option>
+            ${storeOptions}
           </select>
         </td>`;
     }).join('');
     return `
-    <form class="am-roster-form" data-am-user="${am.id}" data-roster-week="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+    <form class="am-roster-form" data-am-user="${am.id}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
       <div class="table-wrap">
         <table>
           <thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
@@ -1503,7 +1522,8 @@ function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
         </table>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
-        <button type="submit" class="btn btn-primary btn-sm">${existingRoster ? 'Save Corrections' : 'Submit for Approval'}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-am-roster-save-draft="1">Save Draft</button>
+        <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
         ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-am-roster-cancel-edit="1">Cancel</button>` : ''}
       </div>
     </form>`;
@@ -1511,14 +1531,10 @@ function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
 
 function renderAmRosterTable(roster, dates) {
     const cells = DAY_KEYS.map(dk => {
-        const val = roster.days[dk];
-        return `<td>${esc(val === 'off' ? 'Off / HQ' : storeName(val))}</td>`;
+        const entry = roster.days[dk] || {};
+        let label = entry.type ? dayTypeLabel(entry.type) : '—';
+        if (entry.storeId) label += ` (${esc(storeName(entry.storeId))})`;
+        return `<td>${label}</td>`;
     }).join('');
-    return `
-      <div class="table-wrap">
-        <table>
-          <thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
-          <tbody><tr>${cells}</tr></tbody>
-        </table>
-      </div>`;
+    return `<div class="table-wrap"><table><thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody><tr>${cells}</tr></tbody></table></div>`;
 }
