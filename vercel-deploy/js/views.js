@@ -1,5 +1,5 @@
 import {STATE} from './config.js';
-import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel} from './helpers.js';
+import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel, mondayOf, weekDates, shiftWeek, DAY_KEYS, DAY_LABELS} from './helpers.js';
 import {
     storeName,
     userName,
@@ -7,7 +7,7 @@ import {
     storeIdsForUser,
     employeesForUser,
     teamForUser,
-    isApproverForRecord
+    isApproverForRecord, activeStaffForStore, approvedLeaveForDay, rosterFor, amRosterFor
 } from './services.js';
 import {
     todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
@@ -38,24 +38,16 @@ export function renderLogin() {
 }
 
 export function navItemsFor(role) {
-    const base = [['dashboard', 'Dashboard'], ['attendance', 'Attendance'], ['tasks', 'Tasks'], ['leave', 'Leave']];
-    if (role !== 'sales_staff') base.push(['reports', 'Reports']);
-    if (role === 'admin') {
-        base.push(['team', 'Team']);
-        base.push(['stores', 'Stores']);
-    }
+    const base = [['dashboard','Dashboard'],['attendance','Attendance'],['tasks','Tasks'],['leave','Leave'],['roster','Duty Roster']];
+    if (role !== 'sales_staff') base.push(['reports','Reports']);
+    if (role === 'admin') { base.push(['team','Team']); base.push(['stores','Stores']); }
     return base;
 }
 
 export function pageTitle(p) {
     return {
-        dashboard: 'Dashboard',
-        attendance: 'Attendance',
-        tasks: 'Daily Tasks',
-        leave: 'Leave',
-        reports: 'Reports',
-        team: 'Team',
-        stores: 'Stores'
+        dashboard: 'Dashboard', attendance: 'Attendance', tasks: 'Daily Tasks',
+        leave: 'Leave', roster: 'Duty Roster', reports: 'Reports', team: 'Team', stores: 'Stores'
     }[p] || '';
 }
 
@@ -1298,4 +1290,235 @@ export function renderForcePasswordChange() {
       </form>
     </div>
   </div>`;
+}
+
+const DAY_TYPE_OPTIONS = [
+    ['shift1', 'Shift 1'], ['shift2', 'Shift 2'], ['half_day', 'Half Day'],
+    ['weekly_off', 'Weekly Off'], ['leave', 'Leave'], ['cross_store', 'Cross-Store Visit']
+];
+const dayTypeLabel = v => (DAY_TYPE_OPTIONS.find(o => o[0] === v) || [, v])[1];
+
+function rosterStatusPill(status) {
+    const cls = { pending_approval: 'pill-pending', approved: 'pill-present', rejected: 'pill-rejected' }[status] || '';
+    const label = { pending_approval: 'Pending Approval', approved: 'Approved', rejected: 'Rejected' }[status] || status;
+    return `<span class="pill ${cls}">${label}</span>`;
+}
+
+export function renderDutyRosterPage() {
+    const u = STATE.user;
+    const currentWeekStart = mondayOf(todayStr());
+    const offset = STATE.rosterWeekOffset || 0;
+    const weekStart = shiftWeek(currentWeekStart, offset);
+    const dates = weekDates(weekStart);
+    const minOffset = -9, maxOffset = 1;
+
+    let html = `
+    <div class="section-title">
+      Week of ${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}
+      <span class="month-switch">
+        <button data-roster-week="-1" ${offset <= minOffset ? 'disabled' : ''}>‹</button>
+        <span>${offset === 0 ? 'This week' : (offset < 0 ? `${Math.abs(offset)} wk ago` : `${offset} wk ahead`)}</span>
+        <button data-roster-week="1" ${offset >= maxOffset ? 'disabled' : ''}>›</button>
+      </span>
+    </div>`;
+
+    if (u.role === 'store_manager') {
+        html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
+    } else if (u.role === 'area_manager') {
+        storesForUser(u).forEach(s => { html += renderStoreRosterSection(s.id, weekStart, dates, u); });
+        html += renderAmRosterSection(u, weekStart, dates);
+    } else if (u.role === 'admin') {
+        html += `<div class="section-title">Store Rosters — All Locations</div>`;
+        STATE.stores.forEach(s => { html += renderStoreRosterSection(s.id, weekStart, dates, u); });
+        html += `<div class="section-title">Area Manager Visit Plans</div>`;
+        STATE.users.filter(x => x.role === 'area_manager').forEach(am => { html += renderAmRosterSection(am, weekStart, dates); });
+    } else if (u.role === 'sales_staff') {
+        html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
+    }
+    return html;
+}
+
+function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
+    const store = STATE.stores.find(s => s.id === storeId);
+    if (!store) return '';
+    const roster = rosterFor(storeId, weekStart);
+    const staff = activeStaffForStore(storeId);
+    const isSM = viewer.role === 'store_manager' && viewer.storeId === storeId;
+    const isAM = viewer.role === 'area_manager';
+    const isAdmin = viewer.role === 'admin';
+    const isStaffViewer = viewer.role === 'sales_staff';
+
+    const canCreate = isSM && !roster;
+    const canEditCorrection = (isAM || isAdmin) && roster;
+    const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval';
+
+    let bodyHtml;
+    if (!roster) {
+        bodyHtml = canCreate
+            ? renderRosterForm(storeId, weekStart, dates, staff, null)
+            : `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
+    } else {
+        const showEditable = STATE.rosterEditingId === roster.id && (isAM || isAdmin);
+        if (showEditable) {
+            bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, roster);
+        } else if (isStaffViewer && roster.status !== 'approved') {
+            bodyHtml = `<div class="empty-note">Roster not yet approved for this week.</div>`;
+        } else {
+            bodyHtml = renderRosterTable(roster, staff, dates);
+            bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
+            if (canEditCorrection) bodyHtml += `<button class="btn btn-ghost btn-sm" data-roster-edit="${roster.id}">Edit corrections</button>`;
+            if (canApprove) bodyHtml += ` <button class="btn btn-primary btn-sm" data-roster-approve="${roster.id}">Approve</button> <button class="btn btn-danger btn-sm" data-roster-reject="${roster.id}">Reject</button>`;
+            bodyHtml += `</div>`;
+        }
+    }
+
+    return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="margin:0;">${esc(store.name)}</h3>
+        ${roster ? rosterStatusPill(roster.status) : ''}
+      </div>
+      ${bodyHtml}
+    </div>`;
+}
+
+function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
+    const entryFor = userId => existingRoster ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} }) : { days: {}, cross: {} };
+
+    const rows = staff.map(s => {
+        const entry = entryFor(s.id);
+        const cells = DAY_KEYS.map((dk, i) => {
+            const dateStr = dates[i];
+            const approvedLeave = approvedLeaveForDay(s.id, dateStr);
+            const locked = !!approvedLeave; // SM cannot override an approved leave day
+            const currentVal = approvedLeave ? 'leave' : (entry.days[dk] || '');
+            const crossVal = entry.cross ? entry.cross[dk] : '';
+            const options = DAY_TYPE_OPTIONS.map(([v, l]) => `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`).join('');
+            const storeOptions = STATE.stores.filter(x => x.id !== storeId).map(x => `<option value="${x.id}" ${crossVal === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+            return `
+              <td>
+                <select class="roster-day-select" data-user="${s.id}" data-day="${dk}" ${locked ? 'disabled' : ''} required>
+                  <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
+                  ${options}
+                </select>
+                <select class="roster-cross-select" data-user="${s.id}" data-day="${dk}" style="${currentVal === 'cross_store' ? '' : 'display:none;'} margin-top:4px;">
+                  <option value="" disabled ${!crossVal ? 'selected' : ''}>Store…</option>
+                  ${storeOptions}
+                </select>
+                ${approvedLeave ? '<div class="text-faint" style="font-size:10px;">Approved leave</div>' : ''}
+              </td>`;
+        }).join('');
+        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td>${cells}</tr>`;
+    }).join('');
+
+    return `
+    <form class="roster-form" data-roster-store="${storeId}" data-roster-week="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button type="submit" class="btn btn-primary btn-sm">${existingRoster ? 'Save Corrections' : 'Submit for Approval'}</button>
+        ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-roster-cancel-edit="1">Cancel</button>` : ''}
+      </div>
+    </form>`;
+}
+
+function renderRosterTable(roster, staff, dates) {
+    const rows = staff.map(s => {
+        const entry = roster.entries.find(e => e.userId === s.id) || { days: {}, cross: {} };
+        const cells = DAY_KEYS.map(dk => {
+            const val = entry.days[dk];
+            let label = val ? dayTypeLabel(val) : '—';
+            if (val === 'cross_store' && entry.cross && entry.cross[dk]) label += ` (${esc(storeName(entry.cross[dk]))})`;
+            return `<td>${label}</td>`;
+        }).join('');
+        return `<tr><td><b>${esc(s.name)}</b></td>${cells}</tr>`;
+    }).join('');
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${roster.submittedAt ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}${roster.editedBy ? ` · Edited by ${esc(userName(roster.editedBy))}` : ''}${roster.approvedBy ? ` · Approved by ${esc(userName(roster.approvedBy))}` : ''}</div>` : ''}`;
+}
+
+function renderAmRosterSection(am, weekStart, dates) {
+    const roster = amRosterFor(am.id, weekStart);
+    const viewer = STATE.user;
+    const isSelf = viewer.id === am.id;
+    const isAdmin = viewer.role === 'admin';
+    const canCreate = isSelf && !roster;
+    const canEdit = isAdmin && roster;
+    const canApprove = isAdmin && roster && roster.status === 'pending_approval';
+    const amStores = storesForUser(am);
+
+    let bodyHtml;
+    if (!roster) {
+        bodyHtml = canCreate ? renderAmRosterForm(am, weekStart, dates, null, amStores) : `<div class="empty-note">No visit plan submitted yet.</div>`;
+    } else {
+        const showEditable = STATE.rosterEditingId === roster.id && isAdmin;
+        if (showEditable) {
+            bodyHtml = renderAmRosterForm(am, weekStart, dates, roster, amStores);
+        } else {
+            bodyHtml = renderAmRosterTable(roster, dates);
+            bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
+            if (canEdit) bodyHtml += `<button class="btn btn-ghost btn-sm" data-am-roster-edit="${roster.id}">Edit corrections</button>`;
+            if (canApprove) bodyHtml += ` <button class="btn btn-primary btn-sm" data-am-roster-approve="${roster.id}">Approve</button> <button class="btn btn-danger btn-sm" data-am-roster-reject="${roster.id}">Reject</button>`;
+            bodyHtml += `</div>`;
+        }
+    }
+
+    return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h3 style="margin:0;">${esc(am.name)}'s Weekly Visit Plan</h3>
+        ${roster ? rosterStatusPill(roster.status) : ''}
+      </div>
+      ${bodyHtml}
+    </div>`;
+}
+
+function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
+    const cells = DAY_KEYS.map((dk, i) => {
+        const val = existingRoster ? existingRoster.days[dk] : '';
+        return `<td>
+          <select class="am-roster-day-select" data-day="${dk}" required>
+            <option value="" disabled ${!val ? 'selected' : ''}>—</option>
+            <option value="off" ${val === 'off' ? 'selected' : ''}>Off / HQ</option>
+            ${amStores.map(s => `<option value="${s.id}" ${val === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          </select>
+        </td>`;
+    }).join('');
+    return `
+    <form class="am-roster-form" data-am-user="${am.id}" data-roster-week="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <div class="table-wrap">
+        <table>
+          <thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
+          <tbody><tr>${cells}</tr></tbody>
+        </table>
+      </div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button type="submit" class="btn btn-primary btn-sm">${existingRoster ? 'Save Corrections' : 'Submit for Approval'}</button>
+        ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-am-roster-cancel-edit="1">Cancel</button>` : ''}
+      </div>
+    </form>`;
+}
+
+function renderAmRosterTable(roster, dates) {
+    const cells = DAY_KEYS.map(dk => {
+        const val = roster.days[dk];
+        return `<td>${esc(val === 'off' ? 'Off / HQ' : storeName(val))}</td>`;
+    }).join('');
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
+          <tbody><tr>${cells}</tr></tbody>
+        </table>
+      </div>`;
 }

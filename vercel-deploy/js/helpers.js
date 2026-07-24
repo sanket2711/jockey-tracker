@@ -98,3 +98,28 @@ export function computeUnderOverMinutes(rec, store) {
     const scheduledMin = Math.max(0, sched.endMin - sched.startMin);
     return workedMin - scheduledMin;   // +ve = overtime, -ve = undertime
 }
+
+export function mondayOf(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    return localDateStr(d);
+}
+
+export function weekDates(weekStart) {
+    const d0 = new Date(weekStart + 'T00:00:00');
+    return Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(d0); d.setDate(d0.getDate() + i);
+        return localDateStr(d);
+    });
+}
+
+export function shiftWeek(weekStart, n) {
+    const d = new Date(weekStart + 'T00:00:00');
+    d.setDate(d.getDate() + n * 7);
+    return localDateStr(d);
+}
+
+export const DAY_KEYS = ['mon','tue','wed','thu','fri','sat','sun'];
+export const DAY_LABELS = { mon:'Mon', tue:'Tue', wed:'Wed', thu:'Thu', fri:'Fri', sat:'Sat', sun:'Sun' };

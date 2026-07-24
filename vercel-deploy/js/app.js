@@ -1,16 +1,17 @@
 import { STATE, RADIUS_M } from './config.js';
-import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes} from './helpers.js';
+import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes, DAY_KEYS} from './helpers.js';
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor
+    persistLeaves, persistUsers, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor,
+    persistDutyRosters, activeStaffForStore
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
-    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange
+    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -220,6 +221,7 @@ function renderPage() {
         case 'attendance': return renderAttendancePage();
         case 'tasks': return renderTasksPage();
         case 'leave': return renderLeavePage();
+        case 'roster': return renderDutyRosterPage();
         case 'reports': return renderReportsPage();
         case 'team': return renderTeamPage();
         case 'stores': return renderStoresPage();
@@ -519,6 +521,112 @@ function attachAppEvents() {
         });
     });
 
+    document.querySelectorAll('[data-roster-week]').forEach(el => el.addEventListener('click', () => {
+        STATE.rosterWeekOffset = (STATE.rosterWeekOffset || 0) + parseInt(el.dataset.rosterWeek, 10);
+        render();
+    }));
+
+    document.querySelectorAll('[data-roster-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = el.dataset.rosterEdit; render(); }));
+    document.querySelectorAll('[data-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
+    document.querySelectorAll('[data-am-roster-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = el.dataset.amRosterEdit; render(); }));
+    document.querySelectorAll('[data-am-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
+
+    document.querySelectorAll('.roster-day-select').forEach(sel => sel.addEventListener('change', () => {
+        const cross = sel.parentElement.querySelector('.roster-cross-select');
+        if (cross) cross.style.display = sel.value === 'cross_store' ? '' : 'none';
+    }));
+
+    document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const storeId = form.dataset.rosterStore, weekStart = form.dataset.rosterWeek, existingId = form.dataset.rosterId;
+        const staff = activeStaffForStore(storeId);
+
+        const entries = staff.map(s => {
+            const days = {}, cross = {};
+            DAY_KEYS.forEach(dk => {
+                const daySel = form.querySelector(`.roster-day-select[data-user="${s.id}"][data-day="${dk}"]`);
+                days[dk] = daySel ? daySel.value : '';
+                if (days[dk] === 'cross_store') {
+                    const crossSel = form.querySelector(`.roster-cross-select[data-user="${s.id}"][data-day="${dk}"]`);
+                    cross[dk] = crossSel ? crossSel.value : '';
+                }
+            });
+            return { userId: s.id, days, cross };
+        });
+
+        const incomplete = entries.some(en => DAY_KEYS.some(dk => !en.days[dk] || (en.days[dk] === 'cross_store' && !en.cross[dk])));
+        if (incomplete) { alert('Please assign a value for every staff member on every day.'); return; }
+
+        const now = new Date().toISOString();
+        if (existingId) {
+            const rec = STATE.dutyRosters.find(r => r.id === existingId);
+            rec.entries = entries; rec.status = 'pending_approval';
+            rec.editedBy = STATE.user.id; rec.editedAt = now;
+            rec.approvedBy = null; rec.approvedAt = null;
+        } else {
+            STATE.dutyRosters.push({
+                id: uid(), type: 'store', storeId, weekStart, entries,
+                status: 'pending_approval', submittedBy: STATE.user.id, submittedAt: now,
+                editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
+            });
+        }
+        STATE.rosterEditingId = null;
+        await persistDutyRosters();
+        showToast(existingId ? 'Roster corrections saved. Approval required again.' : 'Roster submitted for approval.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
+        await persistDutyRosters(); showToast('Roster approved.'); render();
+    }));
+    document.querySelectorAll('[data-roster-reject]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterReject); if (!rec) return;
+        rec.status = 'rejected'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
+        await persistDutyRosters(); showToast('Roster rejected.'); render();
+    }));
+
+    document.querySelectorAll('.am-roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const userId = form.dataset.amUser, weekStart = form.dataset.rosterWeek, existingId = form.dataset.rosterId;
+        const days = {};
+        DAY_KEYS.forEach(dk => {
+            const sel = form.querySelector(`.am-roster-day-select[data-day="${dk}"]`);
+            days[dk] = sel ? sel.value : '';
+        });
+        if (DAY_KEYS.some(dk => !days[dk])) { alert('Please assign a store or Off for every day.'); return; }
+
+        const now = new Date().toISOString();
+        if (existingId) {
+            const rec = STATE.dutyRosters.find(r => r.id === existingId);
+            rec.days = days; rec.status = 'pending_approval';
+            rec.editedBy = STATE.user.id; rec.editedAt = now;
+            rec.approvedBy = null; rec.approvedAt = null;
+        } else {
+            STATE.dutyRosters.push({
+                id: uid(), type: 'am', userId, weekStart, days,
+                status: 'pending_approval', submittedBy: STATE.user.id, submittedAt: now,
+                editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
+            });
+        }
+        STATE.rosterEditingId = null;
+        await persistDutyRosters();
+        showToast(existingId ? 'Visit plan corrections saved. Approval required again.' : 'Visit plan submitted for approval.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
+        await persistDutyRosters(); showToast('Visit plan approved.'); render();
+    }));
+    document.querySelectorAll('[data-am-roster-reject]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterReject); if (!rec) return;
+        rec.status = 'rejected'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
+        await persistDutyRosters(); showToast('Visit plan rejected.'); render();
+    }));
+
     if (document.getElementById('liveClock')) tickClock();
 }
 
@@ -652,18 +760,20 @@ document.addEventListener('click', (e) => {
 
 /* System Bootstrapper Init Engine */
 async function init() {
-    let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
+    let [stores, users, taskTemplates, attendance, taskInstances, leaves, dutyRosters] = await Promise.all([
         loadKey('stores', true), loadUsersSafe(), loadKey('task_templates', true),
-        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
+        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true),
+        loadKey('duty_rosters', true)
     ]);
     if (!stores || !users) {
         const seed = seedData();
         stores = seed.stores; users = seed.users; taskTemplates = seed.taskTemplates;
-        attendance = []; taskInstances = []; leaves = [];
-        await Promise.all([saveKey('stores', stores, true), saveKey('users', users, true), saveKey('task_templates', taskTemplates, true), saveKey('attendance', attendance, true), saveKey('task_instances', taskInstances, true), saveKey('leaves', leaves, true)]);
+        attendance = []; taskInstances = []; leaves = []; dutyRosters = [];
+        await Promise.all([saveKey('stores', stores, true), saveKey('users', users, true), saveKey('task_templates', taskTemplates, true), saveKey('attendance', attendance, true), saveKey('task_instances', taskInstances, true), saveKey('leaves', leaves, true), saveKey('duty_rosters', dutyRosters, true)]);
     }
     STATE.stores = stores || []; STATE.users = users || []; STATE.taskTemplates = taskTemplates || [];
     STATE.attendance = attendance || []; STATE.taskInstances = taskInstances || []; STATE.leaves = leaves || [];
+    STATE.dutyRosters = dutyRosters || []; // NEW
     ensureInstancesForDate(STATE.stores.map(s => s.id), todayStr());
     const sessionId = await loadKey('session', false);
     if (sessionId) { const u = STATE.users.find(x => x.id === sessionId); if (u) STATE.user = u; }

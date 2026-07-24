@@ -21,7 +21,10 @@ export const STATE = {
     attendanceFilterStaffIds: [],
     teamFilterStoreIds: [],
     teamFilterStaffIds: [],
-    activeDropdown: null
+    activeDropdown: null,
+    dutyRosters: [],
+    rosterWeekOffset: 0,
+    rosterEditingId: null
 };
 
 export const BACKEND_API_URL = "https://jockey-tracker-dev.onrender.com";

@@ -204,8 +204,24 @@ export function authorizedStoreIdsFor(u) {
     return [];
 }
 
-// A pending punch is visible to an approver if either the punch-location store
-// OR the employee's home store falls within the approver's scope.
 export function isApproverForRecord(approverIds, rec) {
     return approverIds.includes(rec.storeId) || (rec.homeStoreId && approverIds.includes(rec.homeStoreId));
+}
+
+export const persistDutyRosters = () => saveKey('duty_rosters', STATE.dutyRosters, true);
+
+export function activeStaffForStore(storeId) {
+    return STATE.users.filter(u => u.active !== false && u.storeId === storeId);
+}
+
+export function approvedLeaveForDay(userId, dateStr) {
+    return STATE.leaves.find(l => l.userId === userId && l.status === 'approved' && dateStr >= l.fromDate && dateStr <= l.toDate);
+}
+
+export function rosterFor(storeId, weekStart) {
+    return STATE.dutyRosters.find(r => r.type === 'store' && r.storeId === storeId && r.weekStart === weekStart);
+}
+
+export function amRosterFor(userId, weekStart) {
+    return STATE.dutyRosters.find(r => r.type === 'am' && r.userId === userId && r.weekStart === weekStart);
 }
