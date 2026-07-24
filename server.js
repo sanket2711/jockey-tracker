@@ -76,7 +76,7 @@ app.post('/api/login', async (req, res) => {
     const record = await DataModel.findOne({ key: 'users' });
     const users = record ? record.value : [];
     const u = users.find(x => x.email.toLowerCase() === (email || '').trim().toLowerCase() && x.active !== false);
-    if (!u) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!u || !u.password) return res.status(401).json({ error: 'Invalid credentials' }); // CHANGED: guard missing hash
     const match = await bcrypt.compare(password, u.password);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
     const { password: _pw, ...safeUser } = u;
@@ -86,13 +86,35 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.get('/api/storage/:key', async (req, res) => {
-  if (req.params.key === 'users') {
-    return res.status(403).json({ error: 'Use /api/users instead' });
+app.post('/api/storage/:key', async (req, res) => {
+  if (req.body.value === undefined || req.body.value === null) {
+    return res.status(400).json({ error: 'value is required' });
   }
+  let value = req.body.value;
+
+  if (req.params.key === 'users' && Array.isArray(value)) {
+    // Preserve existing hashed passwords when the incoming record omits one —
+    // this happens whenever the client works from the sanitized /api/users list.
+    const existingRecord = await DataModel.findOne({ key: 'users' });
+    const existingUsers = existingRecord ? existingRecord.value : [];
+    const existingById = new Map(existingUsers.map(u => [u.id, u]));
+
+    value = await Promise.all(value.map(async u => {
+      if (!u.password) {
+        const prior = existingById.get(u.id);
+        if (prior && prior.password) {
+          u.password = prior.password; // keep the hash that was already stored
+        }
+      } else if (!u.password.startsWith('$2')) {
+        u.password = await bcrypt.hash(u.password, 10); // hash newly-set plaintext password
+      }
+      return u;
+    }));
+  }
+
   try {
-    const record = await DataModel.findOne({ key: req.params.key });
-    return res.json(record ? record.value : null);
+    await DataModel.findOneAndUpdate({ key: req.params.key },{ value },{ upsert: true, new: true });
+    return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
