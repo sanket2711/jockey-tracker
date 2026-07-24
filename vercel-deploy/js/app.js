@@ -630,6 +630,49 @@ function attachAppEvents() {
         await persistDutyRosters(); showToast('Visit plan rejected.'); render();
     }));
 
+    document.querySelectorAll('[data-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
+        const form = btn.closest('.roster-form');
+        if (saveStoreRoster(form, { asDraft: true })) {
+            await persistDutyRosters();
+            showToast('Draft saved. You can continue editing anytime.');
+            render();
+        }
+    }));
+
+    document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (saveStoreRoster(form, { asDraft: false })) {
+            STATE.rosterEditingId = null;
+            await persistDutyRosters();
+            showToast('Roster submitted for approval.');
+            render();
+        }
+    }));
+
+    document.querySelectorAll('.am-roster-type-select').forEach(sel => sel.addEventListener('change', () => {
+        const needsStore = ['shift1', 'shift2', 'half_day'].includes(sel.value);
+        const storeSel = sel.parentElement.querySelector('.am-roster-store-select');
+        if (storeSel) storeSel.style.display = needsStore ? '' : 'none';
+    }));
+
+    document.querySelectorAll('[data-roster-delete-draft]').forEach(el => el.addEventListener('click', async () => {
+        const id = el.dataset.rosterDeleteDraft;
+        if (!confirm('Delete this draft? All unsaved progress for this week will be lost.')) return;
+        STATE.dutyRosters = STATE.dutyRosters.filter(r => r.id !== id);
+        await persistDutyRosters();
+        showToast('Draft deleted.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-delete-draft]').forEach(el => el.addEventListener('click', async () => {
+        const id = el.dataset.amRosterDeleteDraft;
+        if (!confirm('Delete this draft visit plan? All unsaved progress for this week will be lost.')) return;
+        STATE.dutyRosters = STATE.dutyRosters.filter(r => r.id !== id);
+        await persistDutyRosters();
+        showToast('Draft visit plan deleted.');
+        render();
+    }));
+
     if (document.getElementById('liveClock')) tickClock();
 }
 
@@ -834,24 +877,5 @@ function saveStoreRoster(form, { asDraft }) {
     }
     return true;
 }
-
-document.querySelectorAll('[data-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
-    const form = btn.closest('.roster-form');
-    if (saveStoreRoster(form, { asDraft: true })) {
-        await persistDutyRosters();
-        showToast('Draft saved. You can continue editing anytime.');
-        render();
-    }
-}));
-
-document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (saveStoreRoster(form, { asDraft: false })) {
-        STATE.rosterEditingId = null;
-        await persistDutyRosters();
-        showToast('Roster submitted for approval.');
-        render();
-    }
-}));
 
 init();

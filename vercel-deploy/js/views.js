@@ -1355,13 +1355,13 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
 
     let bodyHtml;
     if (canCreateOrContinueDraft) {
-        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null);
+        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null, true); // CHANGED: isDraftMode = true
     } else if (!roster) {
         bodyHtml = `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
     } else {
         const showEditable = STATE.rosterEditingId === roster.id && (isAM || isAdmin);
         if (showEditable) {
-            bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, roster);
+            bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, roster, false); // CHANGED: isDraftMode = false (corrections mode)
         } else if (isStaffViewer && roster.status !== 'approved') {
             bodyHtml = `<div class="empty-note">Roster not yet approved for this week.</div>`;
         } else {
@@ -1385,7 +1385,7 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
 
 const CROSS_SHIFT_OPTIONS = [['shift1','Shift 1'],['shift2','Shift 2'],['half_day','Half Day']];
 
-function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
+function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDraftMode){
     const entryFor = userId => existingRoster ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} }) : { days: {}, cross: {} };
 
     const rows = staff.map(s => {
@@ -1431,7 +1431,9 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster) {
       <div class="modal-actions" style="margin-top:10px;">
         <button type="button" class="btn btn-ghost btn-sm" data-roster-save-draft="1">Save Draft</button>
         <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
-        ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-roster-cancel-edit="1">Cancel</button>` : ''}
+        ${isDraftMode && existingRoster
+        ? `<button type="button" class="btn btn-danger btn-sm" data-roster-delete-draft="${existingRoster.id}">Delete Draft</button>`
+        : (existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-roster-cancel-edit="1">Cancel</button>` : '')}
       </div>
     </form>`;
 }
@@ -1467,13 +1469,13 @@ function renderAmRosterSection(am, weekStart, dates) {
 
     let bodyHtml;
     if (canCreateOrContinueDraft) {
-        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores);
+        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores, true); // CHANGED
     } else if (!roster) {
         bodyHtml = `<div class="empty-note">No visit plan submitted yet.</div>`;
     } else {
         const showEditable = STATE.rosterEditingId === roster.id && isAdmin;
         if (showEditable) {
-            bodyHtml = renderAmRosterForm(am, weekStart, dates, roster, amStores);
+            bodyHtml = renderAmRosterForm(am, weekStart, dates, roster, amStores, false);
         } else {
             bodyHtml = renderAmRosterTable(roster, dates);
             bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
@@ -1495,7 +1497,7 @@ function renderAmRosterSection(am, weekStart, dates) {
 
 const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
 
-function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
+function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores, isDraftMode) {
     const cells = DAY_KEYS.map(dk => {
         const entry = existingRoster ? (existingRoster.days[dk] || {}) : {};
         const currentVal = entry.type || '';
@@ -1524,7 +1526,9 @@ function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores) {
       <div class="modal-actions" style="margin-top:10px;">
         <button type="button" class="btn btn-ghost btn-sm" data-am-roster-save-draft="1">Save Draft</button>
         <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
-        ${existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-am-roster-cancel-edit="1">Cancel</button>` : ''}
+        ${isDraftMode && existingRoster
+        ? `<button type="button" class="btn btn-danger btn-sm" data-am-roster-delete-draft="${existingRoster.id}">Delete Draft</button>`
+        : (existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-am-roster-cancel-edit="1">Cancel</button>` : '')}
       </div>
     </form>`;
 }
