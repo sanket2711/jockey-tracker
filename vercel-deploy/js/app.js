@@ -11,7 +11,8 @@ import {
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
-    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage
+    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage,
+    openRejectReasonModal, showValidationModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -111,7 +112,7 @@ export function monthlyReport(userId, monthDate) {
     return { present, late, absent, leave, totalUnderMin, totalOverMin, rows };
 }
 
-function showToast(msg) {
+export function showToast(msg) {
     STATE.toast = msg; render();
     setTimeout(() => { STATE.toast = null; render(); }, 2800);
 }
@@ -539,57 +540,6 @@ function attachAppEvents() {
         if (shiftSel) shiftSel.style.display = show;
     }));
 
-    document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const storeId = form.dataset.store, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
-        const staff = activeStaffForStore(storeId);
-
-        const entries = staff.map(s => {
-            const days = {}, cross = {};
-            DAY_KEYS.forEach(dk => {
-                const daySel = form.querySelector(`.roster-day-select[data-user="${s.id}"][data-day="${dk}"]`);
-                days[dk] = daySel ? daySel.value : '';
-                if (days[dk] === 'cross_store') {
-                    const crossSel = form.querySelector(`.roster-cross-select[data-user="${s.id}"][data-day="${dk}"]`);
-                    cross[dk] = crossSel ? crossSel.value : '';
-                }
-            });
-            return { userId: s.id, days, cross };
-        });
-
-        const incomplete = entries.some(en => DAY_KEYS.some(dk => !en.days[dk] || (en.days[dk] === 'cross_store' && !en.cross[dk])));
-        if (incomplete) { alert('Please assign a value for every staff member on every day.'); return; }
-
-        const now = new Date().toISOString();
-        if (existingId) {
-            const rec = STATE.dutyRosters.find(r => r.id === existingId);
-            rec.entries = entries; rec.status = 'pending_approval';
-            rec.editedBy = STATE.user.id; rec.editedAt = now;
-            rec.approvedBy = null; rec.approvedAt = null;
-        } else {
-            STATE.dutyRosters.push({
-                id: uid(), type: 'store', storeId, weekStart, entries,
-                status: 'pending_approval', submittedBy: STATE.user.id, submittedAt: now,
-                editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
-            });
-        }
-        STATE.rosterEditingId = null;
-        await persistDutyRosters();
-        showToast(existingId ? 'Roster corrections saved. Approval required again.' : 'Roster submitted for approval.');
-        render();
-    }));
-
-    document.querySelectorAll('[data-roster-approve]').forEach(el => el.addEventListener('click', async () => {
-        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterApprove); if (!rec) return;
-        rec.status = 'approved'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
-        await persistDutyRosters(); showToast('Roster approved.'); render();
-    }));
-    document.querySelectorAll('[data-roster-reject]').forEach(el => el.addEventListener('click', async () => {
-        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterReject); if (!rec) return;
-        rec.status = 'rejected'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
-        await persistDutyRosters(); showToast('Roster rejected.'); render();
-    }));
-
     document.querySelectorAll('.am-roster-form').forEach(form => form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
@@ -617,17 +567,6 @@ function attachAppEvents() {
         await persistDutyRosters();
         showToast(existingId ? 'Visit plan corrections saved. Approval required again.' : 'Visit plan submitted for approval.');
         render();
-    }));
-
-    document.querySelectorAll('[data-am-roster-approve]').forEach(el => el.addEventListener('click', async () => {
-        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterApprove); if (!rec) return;
-        rec.status = 'approved'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
-        await persistDutyRosters(); showToast('Visit plan approved.'); render();
-    }));
-    document.querySelectorAll('[data-am-roster-reject]').forEach(el => el.addEventListener('click', async () => {
-        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterReject); if (!rec) return;
-        rec.status = 'rejected'; rec.approvedBy = STATE.user.id; rec.approvedAt = new Date().toISOString();
-        await persistDutyRosters(); showToast('Visit plan rejected.'); render();
     }));
 
     document.querySelectorAll('[data-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
@@ -671,6 +610,28 @@ function attachAppEvents() {
         await persistDutyRosters();
         showToast('Draft visit plan deleted.');
         render();
+    }));
+
+    document.querySelectorAll('[data-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString(); // CHANGED: decidedBy not approvedBy
+        rec.rejectionReason = null; // CHANGED: clear any stale reason once approved
+        await persistDutyRosters(); showToast('Roster approved.'); render();
+    }));
+
+    document.querySelectorAll('[data-roster-reject]').forEach(el => el.addEventListener('click', () => {
+        openRejectReasonModal(el.dataset.rosterReject, 'store');
+    }));
+
+    document.querySelectorAll('[data-am-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString(); // CHANGED
+        rec.rejectionReason = null; // CHANGED
+        await persistDutyRosters(); showToast('Visit plan approved.'); render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-reject]').forEach(el => el.addEventListener('click', () => { // CHANGED
+        openRejectReasonModal(el.dataset.amRosterReject, 'am');
     }));
 
     if (document.getElementById('liveClock')) tickClock();
@@ -853,7 +814,7 @@ function saveStoreRoster(form, { asDraft }) {
         const incomplete = entries.some(en => DAY_KEYS.some(dk =>
             !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk] || !en.cross[dk].storeId || !en.cross[dk].shiftType))
         ));
-        if (incomplete) { alert('Please assign a value for every staff member on every day before submitting.'); return false; }
+        if (incomplete) { showValidationModal('Please assign a value for every staff member on every day before submitting.'); return false; }
     }
 
     const now = new Date().toISOString();

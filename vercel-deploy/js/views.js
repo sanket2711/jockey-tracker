@@ -7,10 +7,11 @@ import {
     storeIdsForUser,
     employeesForUser,
     teamForUser,
-    isApproverForRecord, activeStaffForStore, approvedLeaveForDay, rosterFor, amRosterFor
+    isApproverForRecord, activeStaffForStore, approvedLeaveForDay, rosterFor, amRosterFor, amVisitsForStore,
+    persistDutyRosters
 } from './services.js';
 import {
-    todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
+    todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected, render, showToast
 } from './app.js';
 
 export function renderLogin() {
@@ -1275,6 +1276,32 @@ export function createTaskModal(triggerRender, showToast, uidGenerator, persistT
     });
 }
 
+export function openRejectReasonModal(rosterId, kind) {
+    const content = `
+      <h3>Reject Roster</h3>
+      <form id="rejectReasonForm" style="margin-top:14px;">
+        <div class="field"><label>Reason for rejection</label><textarea id="rejectReasonInput" rows="3" required placeholder="Explain what needs to change"></textarea></div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-danger">Reject</button>
+          <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
+        </div>
+      </form>`;
+    openModal(content);
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('rejectReasonForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const reason = document.getElementById('rejectReasonInput').value.trim();
+        if (!reason) return;
+        const rec = STATE.dutyRosters.find(r => r.id === rosterId); if (!rec) return;
+        rec.status = 'rejected'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString();
+        rec.rejectionReason = reason;
+        closeModal();
+        await persistDutyRosters();
+        showToast(kind === 'am' ? 'Visit plan rejected.' : 'Roster rejected.');
+        render();
+    });
+}
+
 export function renderForcePasswordChange() {
     return `
   <div class="login-wrap">
@@ -1349,23 +1376,28 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
     const isStaffViewer = viewer.role === 'sales_staff';
 
     const isDraft = roster && roster.status === 'draft';
+    const isRejected = roster && roster.status === 'rejected'; // NEW
+    const hiddenFromViewer = isDraft && !isSM;
     const canCreateOrContinueDraft = isSM && (!roster || isDraft);
-    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft;
+    const canSmResubmit = isSM && isRejected; // NEW: SM must be able to re-open a rejected roster
+    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft && !isRejected; // CHANGED: AM/Admin corrections don't apply once it's back with the SM
     const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval';
 
     let bodyHtml;
     if (canCreateOrContinueDraft) {
-        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null, true); // CHANGED: isDraftMode = true
-    } else if (!roster) {
+        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null, true);
+    } else if (!roster || hiddenFromViewer) {
         bodyHtml = `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
     } else {
-        const showEditable = STATE.rosterEditingId === roster.id && (isAM || isAdmin);
+        const showEditable = (STATE.rosterEditingId === roster.id && (isAM || isAdmin)) || canSmResubmit; // CHANGED: SM auto-enters edit mode when rejected
         if (showEditable) {
-            bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, roster, false); // CHANGED: isDraftMode = false (corrections mode)
+            const reasonBanner = isRejected && roster.rejectionReason // NEW
+                ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(220,53,69,0.08);border-radius:6px;color:var(--alert);font-size:12px;"><b>Rejected — reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+            bodyHtml = reasonBanner + renderRosterForm(storeId, weekStart, dates, staff, roster, false); // NEW: banner shown above the edit grid
         } else if (isStaffViewer && roster.status !== 'approved') {
             bodyHtml = `<div class="empty-note">Roster not yet approved for this week.</div>`;
         } else {
-            bodyHtml = renderRosterTable(roster, staff, dates);
+            bodyHtml = renderRosterTable(roster, staff, dates, storeId);
             bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
             if (canEditCorrection) bodyHtml += `<button class="btn btn-ghost btn-sm" data-roster-edit="${roster.id}">Edit corrections</button>`;
             if (canApprove) bodyHtml += ` <button class="btn btn-primary btn-sm" data-roster-approve="${roster.id}">Approve</button> <button class="btn btn-danger btn-sm" data-roster-reject="${roster.id}">Reject</button>`;
@@ -1373,13 +1405,20 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
         }
     }
 
+    const amVisits = amVisitsForStore(storeId, weekStart);
+    const amVisitHtml = amVisits.length ? `
+      <div class="text-faint" style="margin-top:10px;font-size:12px;">
+        ${amVisits.map(v => `<div>👤 ${esc(userName(v.amId))} visiting: ${v.days.map(dk => `${DAY_LABELS[dk]} (${dayTypeLabel(v.entries[dk].type)})`).join(', ')}</div>`).join('')}
+      </div>` : '';
+
     return `
     <div class="card" style="margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <h3 style="margin:0;">${esc(store.name)}</h3>
-        ${roster ? rosterStatusPill(roster.status) : ''}
+        ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
       </div>
       ${bodyHtml}
+      ${amVisitHtml}
     </div>`;
 }
 
@@ -1406,11 +1445,11 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDr
                   <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
                   ${options}
                 </select>
-                <select class="roster-cross-store-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'}margin-top:4px;">
+                <select class="roster-cross-store-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'} margin-top:4px;">
                   <option value="" disabled ${!crossEntry.storeId ? 'selected' : ''}>Store…</option>
                   ${storeOptions}
                 </select>
-                <select class="roster-cross-shift-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'}margin-top:4px;">
+                <select class="roster-cross-shift-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'} margin-top:4px;">
                   <option value="" disabled ${!crossEntry.shiftType ? 'selected' : ''}>Shift…</option>
                   ${crossShiftOptions}
                 </select>
@@ -1438,22 +1477,35 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDr
     </form>`;
 }
 
-function renderRosterTable(roster, staff, dates) {
+function renderRosterTable(roster, staff, dates, storeId) { // CHANGED: added storeId param
     const rows = staff.map(s => {
         const entry = roster.entries.find(e => e.userId === s.id) || { days: {}, cross: {} };
-        const cells = DAY_KEYS.map(dk => {
-            const val = entry.days[dk];
+        const cells = DAY_KEYS.map((dk, i) => {
+            const approvedLeave = approvedLeaveForDay(s.id, dates[i]); // NEW: live re-check
+            const val = approvedLeave ? 'leave' : entry.days[dk]; // CHANGED
             let label = val ? dayTypeLabel(val) : '—';
             if (val === 'cross_store' && entry.cross && entry.cross[dk]) {
                 const c = entry.cross[dk];
-                label += ` (${esc(storeName(c.storeId))} · ${dayTypeLabel(c.shiftType)})`; // CHANGED
+                label += ` (${esc(storeName(c.storeId))} · ${dayTypeLabel(c.shiftType)})`;
             }
             return `<td>${label}</td>`;
         }).join('');
         return `<tr><td><b>${esc(s.name)}</b></td>${cells}</tr>`;
     }).join('');
+
+    let statusLine = '';
+    if (roster.submittedAt) {
+        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}`;
+        if (roster.editedBy) statusLine += ` · Edited by ${esc(userName(roster.editedBy))}`;
+        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`; // CHANGED
+        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`; // NEW
+    }
+    const reasonLine = roster.status === 'rejected' && roster.rejectionReason // NEW
+        ? `<div style="margin-top:4px;color:var(--alert);font-size:11px;"><b>Rejection reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+
     return `<div class="table-wrap"><table><thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
-      ${roster.submittedAt ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}${roster.editedBy ? ` · Edited by ${esc(userName(roster.editedBy))}` : ''}${roster.approvedBy ? ` · Approved by ${esc(userName(roster.approvedBy))}` : ''}</div>` : ''}`;
+      ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
+      ${reasonLine}`;
 }
 
 function renderAmRosterSection(am, weekStart, dates) {
@@ -1462,20 +1514,25 @@ function renderAmRosterSection(am, weekStart, dates) {
     const isSelf = viewer.id === am.id;
     const isAdmin = viewer.role === 'admin';
     const isDraft = roster && roster.status === 'draft';
+    const isRejected = roster && roster.status === 'rejected'; // NEW
+    const hiddenFromViewer = isDraft && !isSelf;
     const canCreateOrContinueDraft = isSelf && (!roster || isDraft);
-    const canEdit = isAdmin && roster && !isDraft;
+    const canSelfResubmit = isSelf && isRejected; // NEW
+    const canEdit = isAdmin && roster && !isDraft && !isRejected; // CHANGED
     const canApprove = isAdmin && roster && roster.status === 'pending_approval';
     const amStores = storesForUser(am);
 
     let bodyHtml;
     if (canCreateOrContinueDraft) {
-        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores, true); // CHANGED
-    } else if (!roster) {
+        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores, true);
+    } else if (!roster || hiddenFromViewer) {
         bodyHtml = `<div class="empty-note">No visit plan submitted yet.</div>`;
     } else {
-        const showEditable = STATE.rosterEditingId === roster.id && isAdmin;
+        const showEditable = (STATE.rosterEditingId === roster.id && isAdmin) || canSelfResubmit; // CHANGED
         if (showEditable) {
-            bodyHtml = renderAmRosterForm(am, weekStart, dates, roster, amStores, false);
+            const reasonBanner = isRejected && roster.rejectionReason // NEW
+                ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(220,53,69,0.08);border-radius:6px;color:var(--alert);font-size:12px;"><b>Rejected — reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+            bodyHtml = reasonBanner + renderAmRosterForm(am, weekStart, dates, roster, amStores, false); // NEW
         } else {
             bodyHtml = renderAmRosterTable(roster, dates);
             bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
@@ -1489,7 +1546,7 @@ function renderAmRosterSection(am, weekStart, dates) {
     <div class="card" style="margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <h3 style="margin:0;">${esc(am.name)}'s Weekly Visit Plan</h3>
-        ${roster ? rosterStatusPill(roster.status) : ''}
+        ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
       </div>
       ${bodyHtml}
     </div>`;
@@ -1540,5 +1597,27 @@ function renderAmRosterTable(roster, dates) {
         if (entry.storeId) label += ` (${esc(storeName(entry.storeId))})`;
         return `<td>${label}</td>`;
     }).join('');
-    return `<div class="table-wrap"><table><thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody><tr>${cells}</tr></tbody></table></div>`;
+    let statusLine = '';
+    if (roster.submittedAt) {
+        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}`;
+        if (roster.editedBy) statusLine += ` · Edited by ${esc(userName(roster.editedBy))}`;
+        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`;
+        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`;
+    }
+    const reasonLine = roster.status === 'rejected' && roster.rejectionReason
+        ? `<div style="margin-top:4px;color:var(--alert);font-size:11px;"><b>Rejection reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+    return `<div class="table-wrap"><table><thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody><tr>${cells}</tr></tbody></table></div>
+      ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
+      ${reasonLine}`;
+}
+
+export function showValidationModal(message) { // NEW
+    const content = `
+      <h3>Incomplete Roster</h3>
+      <p style="margin-top:10px;color:var(--text-soft);font-size:14px;">${esc(message)}</p>
+      <div class="modal-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-primary" id="closeModalBtn">Got it</button>
+      </div>`;
+    openModal(content);
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
 }

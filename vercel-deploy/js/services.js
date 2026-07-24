@@ -1,5 +1,5 @@
 import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
-import {distanceMeters} from './helpers.js';
+import {DAY_KEYS, distanceMeters} from './helpers.js';
 
 export async function saveKey(key, value, shared) {
     try {
@@ -224,4 +224,14 @@ export function rosterFor(storeId, weekStart) {
 
 export function amRosterFor(userId, weekStart) {
     return STATE.dutyRosters.find(r => r.type === 'am' && r.userId === userId && r.weekStart === weekStart);
+}
+
+export function amVisitsForStore(storeId, weekStart) { // NEW
+    return STATE.dutyRosters
+        .filter(r => r.type === 'am' && r.weekStart === weekStart && r.status !== 'draft')
+        .map(r => {
+            const visitDays = DAY_KEYS.filter(dk => r.days[dk] && r.days[dk].storeId === storeId);
+            return visitDays.length ? { amId: r.userId, days: visitDays, entries: r.days } : null;
+        })
+        .filter(Boolean);
 }
