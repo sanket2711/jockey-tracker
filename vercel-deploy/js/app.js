@@ -122,8 +122,21 @@ export function monthlyReport(userId, monthDate) {
 }
 
 export function showToast(msg) {
-    STATE.toast = msg; render();
-    setTimeout(() => { STATE.toast = null; render(); }, 2800);
+    STATE.toast = msg;
+
+    // Remove any existing toast
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    document.body.appendChild(el);
+
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => {
+        STATE.toast = null;
+        el.remove();
+    }, 2800);
 }
 
 /* Auth functions */
@@ -594,12 +607,6 @@ function attachAppEvents() {
         }
     }));
 
-    document.querySelectorAll('.am-roster-type-select').forEach(sel => sel.addEventListener('change', () => {
-        const needsStore = ['shift1', 'shift2', 'half_day'].includes(sel.value);
-        const storeSel = sel.parentElement.querySelector('.am-roster-store-select');
-        if (storeSel) storeSel.style.display = needsStore ? '' : 'none';
-    }));
-
     document.querySelectorAll('[data-roster-delete-draft]').forEach(el => el.addEventListener('click', async () => {
         const id = el.dataset.rosterDeleteDraft;
         if (!confirm('Delete this draft? All unsaved progress for this week will be lost.')) return;
@@ -668,11 +675,6 @@ function attachAppEvents() {
     }));
 
     bindRosterExclusiveUI();
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.roster-pop') && !e.target.closest('[data-roster-add]')) {
-            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
-        }
-    });
 
     if (document.getElementById('liveClock')) tickClock();
 }
@@ -914,51 +916,66 @@ function saveStoreRoster(form, { asDraft }) {
 
 function bindRosterExclusiveUI() {
     document.querySelectorAll('.roster-form').forEach(form => {
+        if (form.dataset.rosterBound === '1') return; // don't double-bind
+        form.dataset.rosterBound = '1';
+
         const bootEl = form.querySelector('.roster-bootstrap');
         if (!bootEl) return;
+
         let boot;
-        try { boot = JSON.parse(bootEl.textContent); } catch { return; }
+        try {
+            // textarea → .value (not textContent)
+            boot = JSON.parse(bootEl.value || bootEl.textContent || '');
+        } catch (err) {
+            console.error('roster bootstrap parse failed', err);
+            return;
+        }
+        if (!boot?.staff) return;
+
         const staffById = Object.fromEntries(boot.staff.map(s => [s.id, s]));
 
         const closePop = () => {
-            form.querySelectorAll('.roster-pop').forEach(p => p.remove());
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
         };
+
+        const escName = (name) => String(name ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+        );
 
         const chipsHtml = (userId, locked) => {
             const name = staffById[userId]?.name || userId;
             return `<span class="roster-chip${locked ? ' locked' : ''}" data-user="${userId}">
-              <span class="chip-name">${name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</span>
+              <span class="chip-name">${escName(name)}</span>
               ${locked ? '' : `<button type="button" class="chip-x" data-roster-chip-remove="${userId}" aria-label="Remove">×</button>`}
             </span>`;
         };
 
         const refreshUnassigned = (dk) => {
             const taken = new Set();
-            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`).forEach(c => taken.add(c.dataset.user));
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`)
+                .forEach(c => taken.add(c.dataset.user));
             const box = form.querySelector(`[data-roster-unassigned][data-day="${dk}"]`);
             if (!box) return;
             const free = boot.staff.filter(s => !taken.has(s.id));
             box.innerHTML = free.length
-                ? free.map(s => chipsHtml(s.id, true).replace(' locked', '') /* unassigned look via parent */).join('')
+                ? free.map(s =>
+                    `<span class="roster-chip" data-user="${s.id}"><span class="chip-name">${escName(s.name)}</span></span>`
+                ).join('')
                 : '<span class="text-faint" style="font-size:11px;">All assigned</span>';
-            // re-mark unassigned chips without remove btn
-            box.querySelectorAll('.roster-chip').forEach(ch => {
-                ch.classList.remove('locked');
-                const x = ch.querySelector('.chip-x'); if (x) x.remove();
-            });
         };
 
         const removeUserFromDay = (userId, dk) => {
-            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user="${userId}"]`)
-                .forEach(ch => ch.remove());
+            form.querySelectorAll(
+                `[data-roster-chips][data-day="${dk}"] .roster-chip[data-user="${userId}"]`
+            ).forEach(ch => ch.remove());
         };
 
         const addUserToLane = (userId, type, dk) => {
-            // EXCLUSIVE: strip from every lane that day first
-            removeUserFromDay(userId, dk);
-            const box = form.querySelector(`[data-roster-chips][data-type="${type}"][data-day="${dk}"]`);
+            removeUserFromDay(userId, dk); // exclusive: one duty per day
+            const box = form.querySelector(
+                `[data-roster-chips][data-type="${type}"][data-day="${dk}"]`
+            );
             if (!box) return;
-            // avoid dup
             if (box.querySelector(`.roster-chip[data-user="${userId}"]`)) return;
             box.insertAdjacentHTML('beforeend', chipsHtml(userId, type === 'leave'));
             refreshUnassigned(dk);
@@ -968,6 +985,7 @@ function bindRosterExclusiveUI() {
             const rm = e.target.closest('[data-roster-chip-remove]');
             if (rm) {
                 e.preventDefault();
+                e.stopPropagation();
                 const chip = rm.closest('.roster-chip');
                 const lane = rm.closest('[data-roster-chips]');
                 if (chip && lane) {
@@ -980,10 +998,8 @@ function bindRosterExclusiveUI() {
             }
 
             const addBtn = e.target.closest('[data-roster-add]');
-            if (!addBtn) {
-                if (!e.target.closest('.roster-pop')) closePop();
-                return;
-            }
+            if (!addBtn || !form.contains(addBtn)) return;
+
             e.preventDefault();
             e.stopPropagation();
             closePop();
@@ -997,42 +1013,39 @@ function bindRosterExclusiveUI() {
 
             const pop = document.createElement('div');
             pop.className = 'roster-pop';
-            pop.innerHTML = `<div class="roster-pop-title">Available · ${dk.toUpperCase()}</div>` + (
-                available.length
-                    ? available.map(s => `<button type="button" class="roster-pop-item" data-pick="${s.id}">${s.name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</button>`).join('')
-                    : `<div class="roster-pop-empty">Everyone is already assigned this day</div>`
-            );
+            pop.innerHTML =
+                `<div class="roster-pop-title">Available · ${String(dk).toUpperCase()}</div>` +
+                (available.length
+                    ? available.map(s =>
+                        `<button type="button" class="roster-pop-item" data-pick="${s.id}">${escName(s.name)}</button>`
+                    ).join('')
+                    : `<div class="roster-pop-empty">Everyone is already assigned this day</div>`);
 
-            // position near button
             const rect = addBtn.getBoundingClientRect();
             pop.style.position = 'fixed';
             pop.style.left = Math.min(rect.left, window.innerWidth - 240) + 'px';
             pop.style.top = Math.min(rect.bottom + 6, window.innerHeight - 280) + 'px';
             document.body.appendChild(pop);
-            // keep reference on form for closePop
-            pop.dataset.rosterPop = '1';
-            // move into form tracking
-            form._rosterPop = pop;
 
             pop.addEventListener('click', (ev) => {
                 const item = ev.target.closest('[data-pick]');
                 if (!item) return;
                 addUserToLane(item.dataset.pick, type, dk);
-                pop.remove();
-                form._rosterPop = null;
+                closePop();
             });
         });
 
-        // improve closePop to also remove body-level pop
-        const _close = closePop;
-        // redefine close using body
-        form._closeRosterPop = () => {
-            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
-            form._rosterPop = null;
-        };
-
-        // init unassigned strips
         DAY_KEYS.forEach(dk => refreshUnassigned(dk));
+    });
+}
+
+// Call once at module load — NOT inside attachAppEvents on every render
+if (!window.__rosterPopCloserBound) {
+    window.__rosterPopCloserBound = true;
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.roster-pop') && !e.target.closest('[data-roster-add]')) {
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
+        }
     });
 }
 

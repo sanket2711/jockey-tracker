@@ -1510,9 +1510,7 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDr
                 </div>`;
             }
 
-            const addBtn = isLeave
-                ? `<div class="text-faint" style="font-size:10px;">From approved leave</div>`
-                : `<button type="button" class="roster-add-btn" data-roster-add data-type="${type}" data-day="${dk}">+ Add</button>`;
+            const addBtn = `<button type="button" class="roster-add-btn" data-roster-add data-type="${type}" data-day="${dk}">+ Add</button>`;
 
             return `<td>
               <div class="roster-lane" data-type="${type}" data-day="${dk}">
@@ -1546,18 +1544,19 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDr
         </td>`;
     }).join('');
 
-    // Serialize initial state for JS (exclusive engine)
     const bootstrap = {
         staff: staff.map(s => ({ id: s.id, name: s.name })),
         dayMap
     };
+    const bootJson = JSON.stringify(bootstrap).replace(/</g, '\\u003c');
 
     return `
     <form class="roster-form" data-store="${storeId}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <textarea class="roster-bootstrap" hidden>${bootJson}</textarea>
       <script type="application/json" class="roster-bootstrap">${esc(JSON.stringify(bootstrap))}</script>
       <div class="roster-hint">
         <span><b>How to fill:</b> tap <b>+ Add</b> to place someone on a duty. Each person can only sit on <b>one</b> duty per day.</span>
-        <span>Leave is locked from approved leave requests.</span>
+        <!--<span>Leave is locked from approved leave requests.</span>-->
       </div>
       <div class="roster-grid-wrap">
         <table class="roster-grid">
@@ -1686,28 +1685,57 @@ function renderAmRosterSection(am, weekStart, dates) {
 const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
 
 function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores, isDraftMode) {
-    const cells = DAY_KEYS.map(dk => {
+    // Shift-type options for AM visit plan (no cross_store)
+    const typeOptionsList = [
+        ['shift1', 'Shift 1'],
+        ['shift2', 'Shift 2'],
+        ['half_day', 'Half Day'],
+        ['weekly_off', 'Weekly Off'],
+        ['leave', 'Leave']
+    ];
+
+    const cells = DAY_KEYS.map((dk, i) => {
         const entry = existingRoster ? (existingRoster.days[dk] || {}) : {};
         const currentVal = entry.type || '';
-        const needsStore = currentVal === 'shift1' || currentVal === 'shift2' || currentVal === 'half_day';
-        const typeOptions = AM_DAY_TYPE_OPTIONS.map(([v, l]) => `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`).join('');
-        const storeOptions = amStores.map(s => `<option value="${s.id}" ${entry.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+        const currentStore = entry.storeId || '';
+        // Store required for working days; optional for off/leave (still shown)
+        const storeAlwaysUseful = true;
+
+        const typeOptions = typeOptionsList.map(([v, l]) =>
+            `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`
+        ).join('');
+        const storeOptions = amStores.map(s =>
+            `<option value="${s.id}" ${currentStore === s.id ? 'selected' : ''}>${esc(s.name)}</option>`
+        ).join('');
+
         return `<td>
-          <select class="am-roster-type-select" data-day="${dk}" required>
-            <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
-            ${typeOptions}
-          </select>
-          <select class="am-roster-store-select" data-day="${dk}" style="margin-top:4px;${needsStore ? '' : 'display:none;'}">
-            <option value="" disabled ${!entry.storeId ? 'selected' : ''}>Store…</option>
-            ${storeOptions}
-          </select>
+          <div class="am-day-cell">
+            <label class="am-field-label">Shift type</label>
+            <select class="am-roster-type-select" data-day="${dk}" required>
+              <option value="" disabled ${!currentVal ? 'selected' : ''}>Select…</option>
+              ${typeOptions}
+            </select>
+            <label class="am-field-label" style="margin-top:6px;">Store</label>
+            <select class="am-roster-store-select" data-day="${dk}">
+              <option value="" ${!currentStore ? 'selected' : ''}>Select store…</option>
+              ${storeOptions}
+            </select>
+          </div>
         </td>`;
     }).join('');
+
     return `
     <form class="am-roster-form" data-am-user="${am.id}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <div class="text-faint" style="font-size:12px;margin-bottom:8px;">
+        Pick a <b>shift type</b> and <b>store</b> for each day. Store is required for Shift 1 / Shift 2 / Half Day.
+      </div>
       <div class="table-wrap">
-        <table>
-          <thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
+        <table class="am-roster-grid">
+          <thead>
+            <tr>${DAY_KEYS.map((dk, i) =>
+        `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`
+    ).join('')}</tr>
+          </thead>
           <tbody><tr>${cells}</tr></tbody>
         </table>
       </div>

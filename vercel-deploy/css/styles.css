@@ -849,3 +849,24 @@ tr:last-child td{border-bottom:none;}
     border: 1px solid var(--line);
 }
 .roster-ro-lane .roster-chip { cursor: default; }
+.am-day-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 120px;
+}
+.am-field-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+}
+.am-roster-grid select {
+    width: 100%;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
