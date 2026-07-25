@@ -546,22 +546,26 @@ function attachAppEvents() {
         const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
         const days = {};
         DAY_KEYS.forEach(dk => {
-            const sel = form.querySelector(`.am-roster-day-select[data-day="${dk}"]`);
-            days[dk] = sel ? sel.value : '';
+            const typeSel = form.querySelector(`.am-roster-type-select[data-day="${dk}"]`); // CHANGED: correct class name
+            const storeSel = form.querySelector(`.am-roster-store-select[data-day="${dk}"]`); // NEW: capture the store too
+            const type = typeSel ? typeSel.value : '';
+            const needsStore = ['shift1', 'shift2', 'half_day'].includes(type);
+            days[dk] = { type, storeId: needsStore ? (storeSel ? storeSel.value : '') : '' }; // CHANGED: match the {type, storeId} shape renderAmRosterTable/amVisitsForStore expect
         });
-        if (DAY_KEYS.some(dk => !days[dk])) { alert('Please assign a store or Off for every day.'); return; }
+        const incomplete = DAY_KEYS.some(dk => !days[dk].type || (['shift1','shift2','half_day'].includes(days[dk].type) && !days[dk].storeId)); // CHANGED
+        if (incomplete) { showToast('Please assign a store or Off for every day.'); return; } // CHANGED: consistent with the rest of the app
 
         const now = new Date().toISOString();
         if (existingId) {
             const rec = STATE.dutyRosters.find(r => r.id === existingId);
             rec.days = days; rec.status = 'pending_approval';
-            rec.editedBy = STATE.user.id; rec.editedAt = now;
-            rec.approvedBy = null; rec.approvedAt = null;
+            rec.submittedBy = STATE.user.id; rec.submittedAt = now; // CHANGED: resubmission should re-stamp submittedBy like the store roster does
+            rec.editedBy = null; rec.editedAt = null; rec.decidedBy = null; rec.decidedAt = null; rec.rejectionReason = null; // CHANGED: field names aligned with store roster
         } else {
             STATE.dutyRosters.push({
                 id: uid(), type: 'am', userId, weekStart, days,
                 status: 'pending_approval', submittedBy: STATE.user.id, submittedAt: now,
-                editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
+                editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
             });
         }
         STATE.rosterEditingId = null;
@@ -610,6 +614,33 @@ function attachAppEvents() {
         STATE.dutyRosters = STATE.dutyRosters.filter(r => r.id !== id);
         await persistDutyRosters();
         showToast('Draft visit plan deleted.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
+        const form = btn.closest('.am-roster-form');
+        const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
+        const days = {};
+        DAY_KEYS.forEach(dk => {
+            const typeSel = form.querySelector(`.am-roster-type-select[data-day="${dk}"]`);
+            const storeSel = form.querySelector(`.am-roster-store-select[data-day="${dk}"]`);
+            const type = typeSel ? typeSel.value : '';
+            const needsStore = ['shift1', 'shift2', 'half_day'].includes(type);
+            days[dk] = { type, storeId: needsStore ? (storeSel ? storeSel.value : '') : '' };
+        });
+        const now = new Date().toISOString();
+        if (existingId) {
+            const rec = STATE.dutyRosters.find(r => r.id === existingId);
+            rec.days = days; rec.status = 'draft';
+        } else {
+            STATE.dutyRosters.push({
+                id: uid(), type: 'am', userId, weekStart, days,
+                status: 'draft', submittedBy: null, submittedAt: null,
+                editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
+            });
+        }
+        await persistDutyRosters();
+        showToast('Draft saved. You can continue editing anytime.');
         render();
     }));
 
