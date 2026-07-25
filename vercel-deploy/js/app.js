@@ -13,7 +13,7 @@ import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
     persistLeaves, persistUsers, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor,
-    persistDutyRosters, activeStaffForStore, approvedLeaveForDay, userName, storeName
+    persistDutyRosters, activeStaffForStore, approvedLeaveForDay, userName, storeName, storeIdsForUser
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -1250,7 +1250,46 @@ function allStoresShareText(week) {
     return `Duty rosters (${n} store${n === 1 ? '' : 's'}) — ${name} — week ${range}`;
 }
 
+// Helper: returns array of store names whose roster is NOT approved for the week
+function unapprovedStoreNames(week) {
+    const u = STATE.user;
+    const storeIds = u.role === 'admin'
+        ? STATE.stores.map(s => s.id)
+        : storeIdsForUser(u);
+
+    const unapproved = storeIds.filter(sid => {
+        const roster = STATE.dutyRosters.find(r =>
+            r.type === 'store' && r.storeId === sid && r.weekStart === week && r.status === 'approved'
+        );
+        return !roster; // no approved roster = unapproved
+    });
+
+    return unapproved.map(sid => {
+        const s = STATE.stores.find(x => x.id === sid);
+        return s ? s.name : sid;
+    });
+}
+
+// Also check AM's own roster if user is AM
+function amRosterApproved(week) {
+    const u = STATE.user;
+    if (u.role !== 'area_manager') return true; // N/A for admin
+    const amRoster = STATE.dutyRosters.find(r =>
+        r.type === 'am' && r.userId === u.id && r.weekStart === week && r.status === 'approved'
+    );
+    return !!amRoster;
+}
+
 async function exportAllStoreRosters(week) {
+    const unapproved = unapprovedStoreNames(week);
+    if (unapproved.length > 0) {
+        showToast(`Please approve duty roster of: ${unapproved.join(', ')}`);
+        return;
+    }
+    if (!amRosterApproved(week)) {
+        showToast('Please approve the visit plan for the Area Manager before exporting.');
+        return;
+    }
     const canvas = await captureStoresBundle(week);
     if (!canvas) return;
     const blob = await canvasToBlob(canvas);
@@ -1260,15 +1299,22 @@ async function exportAllStoreRosters(week) {
 }
 
 async function shareAllStoreRostersWhatsApp(week) {
+    const unapproved = unapprovedStoreNames(week);
+    if (unapproved.length > 0) {
+        showToast(`Please approve duty roster of: ${unapproved.join(', ')}`);
+        return;
+    }
+    if (!amRosterApproved(week)) {
+        showToast('Please approve the visit plan for the Area Manager before exporting.');
+        return;
+    }
     const canvas = await captureStoresBundle(week);
     if (!canvas) return;
     const blob = await canvasToBlob(canvas);
     if (!blob) { showToast('Could not build PNG.'); return; }
-
     const filename = allStoresShareName(week);
     const text = allStoresShareText(week);
     const file = new File([blob], filename, { type: 'image/png' });
-
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
             await navigator.share({ files: [file], title: 'Duty rosters', text });
@@ -1279,12 +1325,10 @@ async function shareAllStoreRostersWhatsApp(week) {
             console.warn(err);
         }
     }
-
     downloadBlob(blob, filename);
     window.open(
         'https://wa.me/?text=' + encodeURIComponent(text + '\n\n(Image downloaded — attach it in the chat.)'),
-        '_blank',
-        'noopener,noreferrer'
+        '_blank', 'noopener,noreferrer'
     );
     showToast('Image downloaded. Attach it in WhatsApp.');
 }

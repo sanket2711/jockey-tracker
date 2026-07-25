@@ -1634,6 +1634,12 @@ function renderRosterTable(roster, staff, dates, storeId) {
 
     const typeRows = DAY_TYPE_OPTIONS.map(([type]) => {
         const meta = ROSTER_TYPE_META[type] || { label: type };
+        // ✅ NEW: check if ANY staff is assigned to this type across the whole week
+        const hasAnyStaffThisType = DAY_KEYS.some(dk =>
+            Object.values(dayMap[dk]).some(v => v.type === type)
+        );
+        if (!hasAnyStaffThisType) return ''; // skip the entire row
+
         const cells = DAY_KEYS.map(dk => {
             const people = Object.entries(dayMap[dk]).filter(([, v]) => v.type === type);
             const chips = people.map(([uid, v]) => {
@@ -1729,7 +1735,7 @@ function renderAmRosterSection(am, weekStart, dates) {
 </div>`;
 }
 
-const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
+// const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
 
 function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores, isDraftMode) {
     // Shift-type options for AM visit plan (no cross_store)
@@ -1746,7 +1752,7 @@ function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores, isDr
         const currentVal = entry.type || '';
         const currentStore = entry.storeId || '';
         // Store required for working days; optional for off/leave (still shown)
-        const storeAlwaysUseful = true;
+        // const storeAlwaysUseful = true;
 
         const typeOptions = typeOptionsList.map(([v, l]) =>
             `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`
