@@ -12,7 +12,7 @@ import {
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
     editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage,
-    openRejectReasonModal, showValidationModal
+    openRejectReasonModal
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -158,6 +158,7 @@ async function logout() {
 
 /* Master Engine Orchestrator Lifecycle */
 export function render() {
+    if (document.getElementById('activeModal')) return;
     const root = document.getElementById('root');
     if (!STATE.ready) {
         root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8992A1;font-family:Inter,sans-serif;">Loading ShiftLedger…</div>';
@@ -814,7 +815,7 @@ function saveStoreRoster(form, { asDraft }) {
         const incomplete = entries.some(en => DAY_KEYS.some(dk =>
             !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk] || !en.cross[dk].storeId || !en.cross[dk].shiftType))
         ));
-        if (incomplete) { showValidationModal('Please assign a value for every staff member on every day before submitting.'); return false; }
+        if (incomplete) { showToast('Please assign a value for every staff member on every day before submitting.'); return false; }
     }
 
     const now = new Date().toISOString();
@@ -822,18 +823,19 @@ function saveStoreRoster(form, { asDraft }) {
         const rec = STATE.dutyRosters.find(r => r.id === existingId);
         rec.entries = entries;
         if (asDraft) {
-            rec.status = 'draft'; // stays editable
+            rec.status = 'draft';
         } else {
             rec.status = 'pending_approval';
             rec.submittedBy = STATE.user.id; rec.submittedAt = now;
-            rec.editedBy = null; rec.editedAt = null; rec.approvedBy = null; rec.approvedAt = null;
+            rec.editedBy = null; rec.editedAt = null; rec.decidedBy = null; rec.decidedAt = null;
         }
     } else {
         STATE.dutyRosters.push({
             id: uid(), type: 'store', storeId, weekStart, entries,
             status: asDraft ? 'draft' : 'pending_approval',
+            createdBy: STATE.user.id, createdByRole: STATE.user.role, // NEW: track who actually started this roster
             submittedBy: asDraft ? null : STATE.user.id, submittedAt: asDraft ? null : now,
-            editedBy: null, editedAt: null, approvedBy: null, approvedAt: null
+            editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
         });
     }
     return true;

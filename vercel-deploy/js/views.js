@@ -1371,29 +1371,32 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
     const roster = rosterFor(storeId, weekStart);
     const staff = activeStaffForStore(storeId);
     const isSM = viewer.role === 'store_manager' && viewer.storeId === storeId;
-    const isAM = viewer.role === 'area_manager';
+    const isAM = viewer.role === 'area_manager' && storeIdsForUser(viewer).includes(storeId); // CHANGED: scope AM to stores they oversee
     const isAdmin = viewer.role === 'admin';
     const isStaffViewer = viewer.role === 'sales_staff';
 
     const isDraft = roster && roster.status === 'draft';
-    const isRejected = roster && roster.status === 'rejected'; // NEW
-    const hiddenFromViewer = isDraft && !isSM;
-    const canCreateOrContinueDraft = isSM && (!roster || isDraft);
-    const canSmResubmit = isSM && isRejected; // NEW: SM must be able to re-open a rejected roster
-    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft && !isRejected; // CHANGED: AM/Admin corrections don't apply once it's back with the SM
-    const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval';
+    const isRejected = roster && roster.status === 'rejected';
+    const hiddenFromViewer = isDraft && !isSM && !(isAM && roster && roster.createdBy === viewer.id); // CHANGED: AM can still see their own draft
+
+    const canCreate = (isSM || isAM) && !roster; // NEW: either role can start one from scratch
+    const canContinueDraft = isDraft && (isSM || (isAM && roster.createdBy === viewer.id)); // NEW: AM limited to their own draft
+    const canCreateOrContinueDraft = canCreate || canContinueDraft; // CHANGED
+    const canResubmit = isRejected && (isSM || isAM); // NEW: either role can fix and resend after rejection
+    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft && !isRejected;
+    const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval'; // unchanged — already allows self-approval
 
     let bodyHtml;
     if (canCreateOrContinueDraft) {
         bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null, true);
     } else if (!roster || hiddenFromViewer) {
-        bodyHtml = `<div class="empty-note">Roster not yet submitted by the store manager.</div>`;
+        bodyHtml = `<div class="empty-note">Roster not yet submitted${isAM ? ' by the store manager, or you can create one below.' : '.'}</div>`;
     } else {
-        const showEditable = (STATE.rosterEditingId === roster.id && (isAM || isAdmin)) || canSmResubmit; // CHANGED: SM auto-enters edit mode when rejected
+        const showEditable = (STATE.rosterEditingId === roster.id && (isAM || isAdmin)) || canResubmit; // CHANGED: canResubmit replaces canSmResubmit, now covers AM too
         if (showEditable) {
-            const reasonBanner = isRejected && roster.rejectionReason // NEW
+            const reasonBanner = isRejected && roster.rejectionReason
                 ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(220,53,69,0.08);border-radius:6px;color:var(--alert);font-size:12px;"><b>Rejected — reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
-            bodyHtml = reasonBanner + renderRosterForm(storeId, weekStart, dates, staff, roster, false); // NEW: banner shown above the edit grid
+            bodyHtml = reasonBanner + renderRosterForm(storeId, weekStart, dates, staff, roster, false);
         } else if (isStaffViewer && roster.status !== 'approved') {
             bodyHtml = `<div class="empty-note">Roster not yet approved for this week.</div>`;
         } else {
@@ -1411,12 +1414,16 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
         ${amVisits.map(v => `<div>👤 ${esc(userName(v.amId))} visiting: ${v.days.map(dk => `${DAY_LABELS[dk]} (${dayTypeLabel(v.entries[dk].type)})`).join(', ')}</div>`).join('')}
       </div>` : '';
 
+    const createdByLine = roster && roster.createdBy // NEW
+        ? `<div class="text-faint" style="font-size:11px;margin-bottom:4px;">Created by ${esc(userName(roster.createdBy))}${roster.createdByRole === 'area_manager' ? ' (Area Manager)' : ''}</div>` : '';
+
     return `
     <div class="card" style="margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <h3 style="margin:0;">${esc(store.name)}</h3>
         ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
       </div>
+      ${createdByLine}
       ${bodyHtml}
       ${amVisitHtml}
     </div>`;
@@ -1611,13 +1618,13 @@ function renderAmRosterTable(roster, dates) {
       ${reasonLine}`;
 }
 
-export function showValidationModal(message) { // NEW
-    const content = `
-      <h3>Incomplete Roster</h3>
-      <p style="margin-top:10px;color:var(--text-soft);font-size:14px;">${esc(message)}</p>
-      <div class="modal-actions" style="margin-top:16px;">
-        <button type="button" class="btn btn-primary" id="closeModalBtn">Got it</button>
-      </div>`;
-    openModal(content);
-    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-}
+// export function showValidationModal(message) { // NEW
+//     const content = `
+//       <h3>Incomplete Roster</h3>
+//       <p style="margin-top:10px;color:var(--text-soft);font-size:14px;">${esc(message)}</p>
+//       <div class="modal-actions" style="margin-top:16px;">
+//         <button type="button" class="btn btn-primary" id="closeModalBtn">Got it</button>
+//       </div>`;
+//     openModal(content);
+//     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+// }
