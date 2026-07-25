@@ -1319,7 +1319,7 @@ export function renderForcePasswordChange() {
   </div>`;
 }
 
-const DAY_TYPE_OPTIONS = [
+export const DAY_TYPE_OPTIONS = [
     ['shift1', 'Shift 1'], ['shift2', 'Shift 2'], ['half_day', 'Half Day'],
     ['weekly_off', 'Weekly Off'], ['leave', 'Leave'], ['cross_store', 'Cross-Store Visit']
 ];
@@ -1431,50 +1431,157 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
 
 const CROSS_SHIFT_OPTIONS = [['shift1','Shift 1'],['shift2','Shift 2'],['half_day','Half Day']];
 
-function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDraftMode){
-    const entryFor = userId => existingRoster ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} }) : { days: {}, cross: {} };
+const ROSTER_TYPE_META = {
+    shift1:      { label: 'Shift 1',           color: '#2563eb' },
+    shift2:      { label: 'Shift 2',           color: '#7c3aed' },
+    half_day:    { label: 'Half Day',          color: '#d97706' },
+    weekly_off:  { label: 'Weekly Off',        color: '#64748b' },
+    leave:       { label: 'Leave',             color: '#dc2626' },
+    cross_store: { label: 'Cross-Store Visit', color: '#0d9488' }
+};
 
-    const rows = staff.map(s => {
+function buildRosterAssignmentIndex(staff, existingRoster, dates) {
+    const entryFor = userId => existingRoster
+        ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} })
+        : { days: {}, cross: {} };
+
+    // dayKey → userId → { type, cross? }
+    const dayMap = {};
+    DAY_KEYS.forEach(dk => { dayMap[dk] = {}; });
+
+    staff.forEach(s => {
         const entry = entryFor(s.id);
+        DAY_KEYS.forEach((dk, i) => {
+            if (approvedLeaveForDay(s.id, dates[i])) {
+                dayMap[dk][s.id] = { type: 'leave', locked: true };
+                return;
+            }
+            const val = entry.days[dk] || '';
+            if (!val) return;
+            const cell = { type: val, locked: false };
+            if (val === 'cross_store' && entry.cross && entry.cross[dk]) cell.cross = entry.cross[dk];
+            dayMap[dk][s.id] = cell;
+        });
+    });
+    return dayMap;
+}
+
+function renderRosterChip(userId, { locked = false } = {}) {
+    const name = userName(userId);
+    return `<span class="roster-chip${locked ? ' locked' : ''}" data-user="${userId}">
+      <span class="chip-name">${esc(name)}</span>
+      ${locked ? '' : `<button type="button" class="chip-x" data-roster-chip-remove="${userId}" aria-label="Remove">×</button>`}
+    </span>`;
+}
+
+function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDraftMode) {
+    const dayMap = buildRosterAssignmentIndex(staff, existingRoster, dates);
+    const otherStores = STATE.stores.filter(x => x.id !== storeId);
+
+    const typeRows = DAY_TYPE_OPTIONS.map(([type]) => {
+        const meta = ROSTER_TYPE_META[type] || { label: type };
+        const isLeave = type === 'leave';
         const cells = DAY_KEYS.map((dk, i) => {
-            const dateStr = dates[i];
-            const approvedLeave = approvedLeaveForDay(s.id, dateStr);
-            const locked = !!approvedLeave;
-            const currentVal = approvedLeave ? 'leave' : (entry.days[dk] || '');
-            const crossEntry = (entry.cross && entry.cross[dk]) || {}; // CHANGED: cross is now {storeId, shiftType}
-            const options = DAY_TYPE_OPTIONS.map(([v, l]) => `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`).join('');
-            const storeOptions = STATE.stores.filter(x => x.id !== storeId).map(x => `<option value="${x.id}" ${crossEntry.storeId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-            const crossShiftOptions = CROSS_SHIFT_OPTIONS.map(([v, l]) => `<option value="${v}" ${crossEntry.shiftType === v ? 'selected' : ''}>${l}</option>`).join('');
-            const showCross = currentVal === 'cross_store';
-            return `
-              <td>
-                <select class="roster-day-select" data-user="${s.id}" data-day="${dk}" ${locked ? 'disabled' : ''} required>
-                  <option value="" disabled ${!currentVal ? 'selected' : ''}>—</option>
-                  ${options}
-                </select>
-                <select class="roster-cross-store-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'} margin-top:4px;">
-                  <option value="" disabled ${!crossEntry.storeId ? 'selected' : ''}>Store…</option>
-                  ${storeOptions}
-                </select>
-                <select class="roster-cross-shift-select" data-user="${s.id}" data-day="${dk}" style="${showCross ? '' : 'display:none;'} margin-top:4px;">
-                  <option value="" disabled ${!crossEntry.shiftType ? 'selected' : ''}>Shift…</option>
-                  ${crossShiftOptions}
-                </select>
-                ${approvedLeave ? '<div class="text-faint" style="font-size:10px;">Approved leave</div>' : ''}
-              </td>`;
+            const assigned = Object.entries(dayMap[dk])
+                .filter(([, v]) => v.type === type)
+                .map(([uid, v]) => ({ uid, locked: !!v.locked, cross: v.cross }));
+
+            const chips = assigned.map(a => renderRosterChip(a.uid, { locked: isLeave || a.locked })).join('');
+
+            let crossFields = '';
+            if (type === 'cross_store') {
+                // Use first assignee's meta as the day-level store/shift (applies to all CS that day)
+                const meta0 = assigned[0]?.cross || {};
+                const storeOpts = otherStores.map(x =>
+                    `<option value="${x.id}" ${meta0.storeId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`
+                ).join('');
+                const shiftOpts = CROSS_SHIFT_OPTIONS.map(([v, l]) =>
+                    `<option value="${v}" ${meta0.shiftType === v ? 'selected' : ''}>${l}</option>`
+                ).join('');
+                crossFields = `<div class="roster-cross-fields">
+                  <select class="roster-cross-store-select" data-day="${dk}">
+                    <option value="" disabled ${!meta0.storeId ? 'selected' : ''}>Store…</option>
+                    ${storeOpts}
+                  </select>
+                  <select class="roster-cross-shift-select" data-day="${dk}">
+                    <option value="" disabled ${!meta0.shiftType ? 'selected' : ''}>Shift…</option>
+                    ${shiftOpts}
+                  </select>
+                </div>`;
+            }
+
+            const addBtn = isLeave
+                ? `<div class="text-faint" style="font-size:10px;">From approved leave</div>`
+                : `<button type="button" class="roster-add-btn" data-roster-add data-type="${type}" data-day="${dk}">+ Add</button>`;
+
+            return `<td>
+              <div class="roster-lane" data-type="${type}" data-day="${dk}">
+                <div class="roster-chips" data-roster-chips data-type="${type}" data-day="${dk}">${chips || ''}</div>
+                ${crossFields}
+                ${addBtn}
+              </div>
+            </td>`;
         }).join('');
-        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td>${cells}</tr>`;
+
+        return `<tr>
+          <th>
+            <div class="roster-type-label">
+              <span class="roster-type-dot" style="background:${meta.color || '#94a3b8'}"></span>${esc(meta.label)}
+            </div>
+          </th>
+          ${cells}
+        </tr>`;
     }).join('');
+
+    // Unassigned helper row
+    const unassignedRow = DAY_KEYS.map(dk => {
+        const free = staff.filter(s => !dayMap[dk][s.id]);
+        const chips = free.map(s =>
+            `<span class="roster-chip" data-user="${s.id}"><span class="chip-name">${esc(s.name)}</span></span>`
+        ).join('');
+        return `<td>
+          <div class="roster-lane" data-type="unassigned" data-day="${dk}">
+            <div class="roster-chips" data-roster-unassigned data-day="${dk}">${chips || '<span class="text-faint" style="font-size:11px;">All assigned</span>'}</div>
+          </div>
+        </td>`;
+    }).join('');
+
+    // Serialize initial state for JS (exclusive engine)
+    const bootstrap = {
+        staff: staff.map(s => ({ id: s.id, name: s.name })),
+        dayMap
+    };
 
     return `
     <form class="roster-form" data-store="${storeId}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead>
-          <tbody>${rows}</tbody>
+      <script type="application/json" class="roster-bootstrap">${esc(JSON.stringify(bootstrap))}</script>
+      <div class="roster-hint">
+        <span><b>How to fill:</b> tap <b>+ Add</b> to place someone on a duty. Each person can only sit on <b>one</b> duty per day.</span>
+        <span>Leave is locked from approved leave requests.</span>
+      </div>
+      <div class="roster-grid-wrap">
+        <table class="roster-grid">
+          <thead>
+            <tr>
+              <th>Duty</th>
+              ${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span style="font-weight:500;text-transform:none;letter-spacing:0;">${fmtDateShort(dates[i])}</span></th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${typeRows}
+            <tr>
+              <th>
+                <div class="roster-type-label">
+                  <span class="rt-name" style="color:var(--text-soft);font-weight:600;">Unassigned</span>
+                  <span class="rt-count">still free that day</span>
+                </div>
+              </th>
+              ${unassignedRow}
+            </tr>
+          </tbody>
         </table>
       </div>
-      <div class="modal-actions" style="margin-top:10px;">
+      <div class="modal-actions" style="margin-top:14px;">
         <button type="button" class="btn btn-ghost btn-sm" data-roster-save-draft="1">Save Draft</button>
         <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
         ${isDraftMode && existingRoster
@@ -1484,35 +1591,52 @@ function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDr
     </form>`;
 }
 
-function renderRosterTable(roster, staff, dates, storeId) { // CHANGED: added storeId param
-    const rows = staff.map(s => {
-        const entry = roster.entries.find(e => e.userId === s.id) || { days: {}, cross: {} };
-        const cells = DAY_KEYS.map((dk, i) => {
-            const approvedLeave = approvedLeaveForDay(s.id, dates[i]); // NEW: live re-check
-            const val = approvedLeave ? 'leave' : entry.days[dk]; // CHANGED
-            let label = val ? dayTypeLabel(val) : '—';
-            if (val === 'cross_store' && entry.cross && entry.cross[dk]) {
-                const c = entry.cross[dk];
-                label += ` (${esc(storeName(c.storeId))} · ${dayTypeLabel(c.shiftType)})`;
-            }
-            return `<td>${label}</td>`;
+function renderRosterTable(roster, staff, dates, storeId) {
+    const dayMap = buildRosterAssignmentIndex(staff, roster, dates);
+
+    const typeRows = DAY_TYPE_OPTIONS.map(([type]) => {
+        const meta = ROSTER_TYPE_META[type] || { label: type };
+        const cells = DAY_KEYS.map(dk => {
+            const people = Object.entries(dayMap[dk]).filter(([, v]) => v.type === type);
+            const chips = people.map(([uid, v]) => {
+                let extra = '';
+                if (type === 'cross_store' && v.cross) {
+                    extra = ` · ${storeName(v.cross.storeId)} / ${dayTypeLabel(v.cross.shiftType)}`;
+                }
+                return `<span class="roster-chip locked"><span class="chip-name">${esc(userName(uid))}${esc(extra)}</span></span>`;
+            }).join('');
+            return `<td><div class="roster-ro-lane roster-lane" data-type="${type}"><div class="roster-chips">${chips || '<span class="text-faint" style="font-size:11px;">—</span>'}</div></div></td>`;
         }).join('');
-        return `<tr><td><b>${esc(s.name)}</b></td>${cells}</tr>`;
+        return `<tr>
+          <th><div class="roster-type-label"><span class="rt-name">${esc(meta.label)}</span></div></th>
+          ${cells}
+        </tr>`;
     }).join('');
 
     let statusLine = '';
     if (roster.submittedAt) {
-        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}`;
+        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0, 10))} by ${esc(userName(roster.submittedBy))}`;
         if (roster.editedBy) statusLine += ` · Edited by ${esc(userName(roster.editedBy))}`;
-        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`; // CHANGED
-        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`; // NEW
+        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`;
+        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`;
     }
-    const reasonLine = roster.status === 'rejected' && roster.rejectionReason // NEW
+    const reasonLine = roster.status === 'rejected' && roster.rejectionReason
         ? `<div style="margin-top:4px;color:var(--alert);font-size:11px;"><b>Rejection reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
 
-    return `<div class="table-wrap"><table><thead><tr><th>Staff</th>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
-      ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
-      ${reasonLine}`;
+    return `
+    <div class="roster-grid-wrap">
+      <table class="roster-grid">
+        <thead>
+          <tr>
+            <th>Duty</th>
+            ${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span style="font-weight:500;text-transform:none;letter-spacing:0;">${fmtDateShort(dates[i])}</span></th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>${typeRows}</tbody>
+      </table>
+    </div>
+    ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
+    ${reasonLine}`;
 }
 
 function renderAmRosterSection(am, weekStart, dates) {

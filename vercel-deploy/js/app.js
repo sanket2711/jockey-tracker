@@ -1,10 +1,19 @@
 import { STATE, RADIUS_M } from './config.js';
-import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes, DAY_KEYS} from './helpers.js';
+import {
+    uid,
+    todayStr,
+    localDateStr,
+    distanceMeters,
+    isLateAt,
+    computeUnderOverMinutes,
+    DAY_KEYS,
+    weekDates
+} from './helpers.js';
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
     persistLeaves, persistUsers, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor,
-    persistDutyRosters, activeStaffForStore
+    persistDutyRosters, activeStaffForStore, approvedLeaveForDay
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -12,7 +21,7 @@ import {
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
     editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage,
-    openRejectReasonModal
+    openRejectReasonModal, DAY_TYPE_OPTIONS
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -533,14 +542,6 @@ function attachAppEvents() {
     document.querySelectorAll('[data-am-roster-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = el.dataset.amRosterEdit; render(); }));
     document.querySelectorAll('[data-am-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
 
-    document.querySelectorAll('.roster-day-select').forEach(sel => sel.addEventListener('change', () => {
-        const show = sel.value === 'cross_store' ? '' : 'none';
-        const storeSel = sel.parentElement.querySelector('.roster-cross-store-select');
-        const shiftSel = sel.parentElement.querySelector('.roster-cross-shift-select');
-        if (storeSel) storeSel.style.display = show;
-        if (shiftSel) shiftSel.style.display = show;
-    }));
-
     document.querySelectorAll('.am-roster-form').forEach(form => form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
@@ -665,6 +666,13 @@ function attachAppEvents() {
     document.querySelectorAll('[data-am-roster-reject]').forEach(el => el.addEventListener('click', () => { // CHANGED
         openRejectReasonModal(el.dataset.amRosterReject, 'am');
     }));
+
+    bindRosterExclusiveUI();
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.roster-pop') && !e.target.closest('[data-roster-add]')) {
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
+        }
+    });
 
     if (document.getElementById('liveClock')) tickClock();
 }
@@ -823,16 +831,44 @@ async function init() {
 
 function collectStoreRosterEntries(form, storeId) {
     const staff = activeStaffForStore(storeId);
+    const weekStart = form.dataset.weekStart;
+    const dates = weekDates(weekStart);
+
+    // Read chips currently in each lane
+    // day → userId → type
+    const placed = {};
+    DAY_KEYS.forEach(dk => { placed[dk] = {}; });
+
+    form.querySelectorAll('[data-roster-chips]').forEach(box => {
+        const type = box.dataset.type;
+        const dk = box.dataset.day;
+        box.querySelectorAll('.roster-chip[data-user]').forEach(chip => {
+            placed[dk][chip.dataset.user] = type;
+        });
+    });
+
+    // Force approved leave
+    staff.forEach(s => {
+        DAY_KEYS.forEach((dk, i) => {
+            if (approvedLeaveForDay(s.id, dates[i])) placed[dk][s.id] = 'leave';
+        });
+    });
+
+    const crossByDay = {};
+    DAY_KEYS.forEach(dk => {
+        const storeSel = form.querySelector(`.roster-cross-store-select[data-day="${dk}"]`);
+        const shiftSel = form.querySelector(`.roster-cross-shift-select[data-day="${dk}"]`);
+        crossByDay[dk] = {
+            storeId: storeSel ? storeSel.value : '',
+            shiftType: shiftSel ? shiftSel.value : ''
+        };
+    });
+
     return staff.map(s => {
         const days = {}, cross = {};
         DAY_KEYS.forEach(dk => {
-            const daySel = form.querySelector(`.roster-day-select[data-user="${s.id}"][data-day="${dk}"]`);
-            days[dk] = daySel ? daySel.value : '';
-            if (days[dk] === 'cross_store') {
-                const storeSel = form.querySelector(`.roster-cross-store-select[data-user="${s.id}"][data-day="${dk}"]`);
-                const shiftSel = form.querySelector(`.roster-cross-shift-select[data-user="${s.id}"][data-day="${dk}"]`);
-                cross[dk] = { storeId: storeSel ? storeSel.value : '', shiftType: shiftSel ? shiftSel.value : '' };
-            }
+            days[dk] = placed[dk][s.id] || '';
+            if (days[dk] === 'cross_store') cross[dk] = { ...crossByDay[dk] };
         });
         return { userId: s.id, days, cross };
     });
@@ -841,12 +877,16 @@ function collectStoreRosterEntries(form, storeId) {
 function saveStoreRoster(form, { asDraft }) {
     const storeId = form.dataset.store, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
     const entries = collectStoreRosterEntries(form, storeId);
+    if (!entries) return false; // conflict toast already shown
 
     if (!asDraft) {
         const incomplete = entries.some(en => DAY_KEYS.some(dk =>
-            !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk] || !en.cross[dk].storeId || !en.cross[dk].shiftType))
+            !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk]?.storeId || !en.cross[dk]?.shiftType))
         ));
-        if (incomplete) { showToast('Please assign a value for every staff member on every day before submitting.'); return false; }
+        if (incomplete) {
+            showToast('Assign every staff member to exactly one duty each day. Cross-store needs store + shift.');
+            return false;
+        }
     }
 
     const now = new Date().toISOString();
@@ -870,6 +910,130 @@ function saveStoreRoster(form, { asDraft }) {
         });
     }
     return true;
+}
+
+function bindRosterExclusiveUI() {
+    document.querySelectorAll('.roster-form').forEach(form => {
+        const bootEl = form.querySelector('.roster-bootstrap');
+        if (!bootEl) return;
+        let boot;
+        try { boot = JSON.parse(bootEl.textContent); } catch { return; }
+        const staffById = Object.fromEntries(boot.staff.map(s => [s.id, s]));
+
+        const closePop = () => {
+            form.querySelectorAll('.roster-pop').forEach(p => p.remove());
+        };
+
+        const chipsHtml = (userId, locked) => {
+            const name = staffById[userId]?.name || userId;
+            return `<span class="roster-chip${locked ? ' locked' : ''}" data-user="${userId}">
+              <span class="chip-name">${name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</span>
+              ${locked ? '' : `<button type="button" class="chip-x" data-roster-chip-remove="${userId}" aria-label="Remove">×</button>`}
+            </span>`;
+        };
+
+        const refreshUnassigned = (dk) => {
+            const taken = new Set();
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`).forEach(c => taken.add(c.dataset.user));
+            const box = form.querySelector(`[data-roster-unassigned][data-day="${dk}"]`);
+            if (!box) return;
+            const free = boot.staff.filter(s => !taken.has(s.id));
+            box.innerHTML = free.length
+                ? free.map(s => chipsHtml(s.id, true).replace(' locked', '') /* unassigned look via parent */).join('')
+                : '<span class="text-faint" style="font-size:11px;">All assigned</span>';
+            // re-mark unassigned chips without remove btn
+            box.querySelectorAll('.roster-chip').forEach(ch => {
+                ch.classList.remove('locked');
+                const x = ch.querySelector('.chip-x'); if (x) x.remove();
+            });
+        };
+
+        const removeUserFromDay = (userId, dk) => {
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user="${userId}"]`)
+                .forEach(ch => ch.remove());
+        };
+
+        const addUserToLane = (userId, type, dk) => {
+            // EXCLUSIVE: strip from every lane that day first
+            removeUserFromDay(userId, dk);
+            const box = form.querySelector(`[data-roster-chips][data-type="${type}"][data-day="${dk}"]`);
+            if (!box) return;
+            // avoid dup
+            if (box.querySelector(`.roster-chip[data-user="${userId}"]`)) return;
+            box.insertAdjacentHTML('beforeend', chipsHtml(userId, type === 'leave'));
+            refreshUnassigned(dk);
+        };
+
+        form.addEventListener('click', (e) => {
+            const rm = e.target.closest('[data-roster-chip-remove]');
+            if (rm) {
+                e.preventDefault();
+                const chip = rm.closest('.roster-chip');
+                const lane = rm.closest('[data-roster-chips]');
+                if (chip && lane) {
+                    const dk = lane.dataset.day;
+                    chip.remove();
+                    refreshUnassigned(dk);
+                }
+                closePop();
+                return;
+            }
+
+            const addBtn = e.target.closest('[data-roster-add]');
+            if (!addBtn) {
+                if (!e.target.closest('.roster-pop')) closePop();
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            closePop();
+
+            const type = addBtn.dataset.type;
+            const dk = addBtn.dataset.day;
+            const taken = new Set();
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`)
+                .forEach(c => taken.add(c.dataset.user));
+            const available = boot.staff.filter(s => !taken.has(s.id));
+
+            const pop = document.createElement('div');
+            pop.className = 'roster-pop';
+            pop.innerHTML = `<div class="roster-pop-title">Available · ${dk.toUpperCase()}</div>` + (
+                available.length
+                    ? available.map(s => `<button type="button" class="roster-pop-item" data-pick="${s.id}">${s.name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</button>`).join('')
+                    : `<div class="roster-pop-empty">Everyone is already assigned this day</div>`
+            );
+
+            // position near button
+            const rect = addBtn.getBoundingClientRect();
+            pop.style.position = 'fixed';
+            pop.style.left = Math.min(rect.left, window.innerWidth - 240) + 'px';
+            pop.style.top = Math.min(rect.bottom + 6, window.innerHeight - 280) + 'px';
+            document.body.appendChild(pop);
+            // keep reference on form for closePop
+            pop.dataset.rosterPop = '1';
+            // move into form tracking
+            form._rosterPop = pop;
+
+            pop.addEventListener('click', (ev) => {
+                const item = ev.target.closest('[data-pick]');
+                if (!item) return;
+                addUserToLane(item.dataset.pick, type, dk);
+                pop.remove();
+                form._rosterPop = null;
+            });
+        });
+
+        // improve closePop to also remove body-level pop
+        const _close = closePop;
+        // redefine close using body
+        form._closeRosterPop = () => {
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
+            form._rosterPop = null;
+        };
+
+        // init unassigned strips
+        DAY_KEYS.forEach(dk => refreshUnassigned(dk));
+    });
 }
 
 init();
