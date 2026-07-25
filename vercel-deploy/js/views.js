@@ -1349,16 +1349,46 @@ export function renderDutyRosterPage() {
       </span>
     </div>`;
 
+    // NEW: multi-store export for AM (their stores) and Admin (all stores)
+    if (u.role === 'area_manager' || u.role === 'admin') {
+        const scope = u.role === 'admin' ? 'all' : 'mine';
+        html += `
+        <div class="roster-bulk-export card" style="margin-bottom:14px;padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+          <div style="font-size:13px;color:var(--text-soft);">
+            <b style="color:var(--text);">Share all store rosters</b>
+            <div style="font-size:12px;margin-top:2px;">One image · week of ${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}</div>
+          </div>
+          <div class="roster-export-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-roster-export-all="1" data-scope="${scope}" data-week="${weekStart}">
+              📷 Export all stores
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" data-roster-share-all-wa="1" data-scope="${scope}" data-week="${weekStart}">
+              💬 WhatsApp all stores
+            </button>
+          </div>
+        </div>`;
+    }
+
+    // Wrap store sections so we can capture them as a group
     if (u.role === 'store_manager') {
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
         html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
+        html += `</div>`;
     } else if (u.role === 'area_manager') {
-        storesForUser(u).forEach(s => { html += renderStoreRosterSection(s.id, weekStart, dates, u); });
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
+        storesForUser(u).forEach(s => {
+            html += renderStoreRosterSection(s.id, weekStart, dates, u);
+        });
         html += renderAmRosterSection(u, weekStart, dates);
+        html += `</div>`;
     } else if (u.role === 'admin') {
         html += `<div class="section-title">Store Rosters — All Locations</div>`;
-        STATE.stores.forEach(s => { html += renderStoreRosterSection(s.id, weekStart, dates, u); });
-        html += `<div class="section-title">Area Manager Visit Plans</div>`;
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
+        STATE.stores.forEach(s => {
+            html += renderStoreRosterSection(s.id, weekStart, dates, u);
+        });
         STATE.users.filter(x => x.role === 'area_manager').forEach(am => { html += renderAmRosterSection(am, weekStart, dates); });
+        html += `</div>`;
     } else if (u.role === 'sales_staff') {
         html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
     }
@@ -1417,16 +1447,25 @@ function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
     const createdByLine = roster && roster.createdBy // NEW
         ? `<div class="text-faint" style="font-size:11px;margin-bottom:4px;">Created by ${esc(userName(roster.createdBy))}${roster.createdByRole === 'area_manager' ? ' (Area Manager)' : ''}</div>` : '';
 
+    const showExport = canExportRoster(viewer) && roster && !hiddenFromViewer
+        && !(isStaffViewer && roster.status !== 'approved');
+
     return `
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="margin:0;">${esc(store.name)}</h3>
-        ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
-      </div>
-      ${createdByLine}
-      ${bodyHtml}
-      ${amVisitHtml}
-    </div>`;
+<div class="card roster-export-card" style="margin-bottom:16px;"
+     data-export-kind="store" data-export-id="${storeId}" data-export-week="${weekStart}">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <h3 style="margin:0;">${esc(store.name)}</h3>
+      ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
+    </div>
+    ${rosterExportActions('store', storeId, weekStart, showExport)}
+  </div>
+  ${createdByLine}
+  <div class="roster-export-target">
+    ${bodyHtml}
+    ${amVisitHtml}
+  </div>
+</div>`;
 }
 
 const CROSS_SHIFT_OPTIONS = [['shift1','Shift 1'],['shift2','Shift 2'],['half_day','Half Day']];
@@ -1672,14 +1711,22 @@ function renderAmRosterSection(am, weekStart, dates) {
         }
     }
 
+    const showExport = canExportRoster(viewer) && roster && !hiddenFromViewer && roster.status === 'approved';
+
     return `
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h3 style="margin:0;">${esc(am.name)}'s Weekly Visit Plan</h3>
-        ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
-      </div>
-      ${bodyHtml}
-    </div>`;
+<div class="card roster-export-card" style="margin-bottom:16px;"
+     data-export-kind="am" data-export-id="${am.id}" data-export-week="${weekStart}">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <h3 style="margin:0;">${esc(am.name)}'s Weekly Visit Plan</h3>
+      ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
+    </div>
+    ${rosterExportActions('am', am.id, weekStart, showExport)}
+  </div>
+  <div class="roster-export-target">
+    ${bodyHtml}
+  </div>
+</div>`;
 }
 
 const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
@@ -1770,13 +1817,19 @@ function renderAmRosterTable(roster, dates) {
       ${reasonLine}`;
 }
 
-// export function showValidationModal(message) { // NEW
-//     const content = `
-//       <h3>Incomplete Roster</h3>
-//       <p style="margin-top:10px;color:var(--text-soft);font-size:14px;">${esc(message)}</p>
-//       <div class="modal-actions" style="margin-top:16px;">
-//         <button type="button" class="btn btn-primary" id="closeModalBtn">Got it</button>
-//       </div>`;
-//     openModal(content);
-//     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-// }
+function canExportRoster(viewer) {
+    return ['store_manager', 'area_manager', 'admin'].includes(viewer.role);
+}
+
+function rosterExportActions(kind, id, weekStart, visible) {
+    if (!visible) return '';
+    return `
+      <div class="roster-export-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-export-img="${kind}" data-id="${id}" data-week="${weekStart}">
+          📷 Export image
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-share-wa="${kind}" data-id="${id}" data-week="${weekStart}">
+          💬 WhatsApp
+        </button>
+      </div>`;
+}

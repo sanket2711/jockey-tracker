@@ -7,13 +7,13 @@ import {
     isLateAt,
     computeUnderOverMinutes,
     DAY_KEYS,
-    weekDates
+    weekDates, fmtDateShort
 } from './helpers.js';
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
     persistLeaves, persistUsers, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor,
-    persistDutyRosters, activeStaffForStore, approvedLeaveForDay
+    persistDutyRosters, activeStaffForStore, approvedLeaveForDay, userName, storeName
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
@@ -675,6 +675,8 @@ function attachAppEvents() {
     }));
 
     bindRosterExclusiveUI();
+    bindRosterExportActions();
+    bindRosterBulkExport();
 
     if (document.getElementById('liveClock')) tickClock();
 }
@@ -1046,6 +1048,261 @@ if (!window.__rosterPopCloserBound) {
         if (!e.target.closest('.roster-pop') && !e.target.closest('[data-roster-add]')) {
             document.querySelectorAll('.roster-pop').forEach(p => p.remove());
         }
+    });
+}
+
+function findRosterExportCard(kind, id, week) {
+    return document.querySelector(
+        `.roster-export-card[data-export-kind="${kind}"][data-export-id="${id}"][data-export-week="${week}"]`
+    );
+}
+
+function rosterShareFileName(kind, id, week) {
+    const label = kind === 'am'
+        ? (userName(id) || 'am').replace(/\s+/g, '-')
+        : (storeName(id) || 'store').replace(/\s+/g, '-');
+    return `duty-roster-${label}-${week}.png`;
+}
+
+function rosterShareText(kind, id, week) {
+    const range = (() => {
+        try {
+            const dates = weekDates(week);
+            return `${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}`;
+        } catch {
+            return week;
+        }
+    })();
+    if (kind === 'am') {
+        return `Duty roster — ${userName(id)} visit plan (${range})`;
+    }
+    return `Duty roster — ${storeName(id)} (${range})`;
+}
+
+async function captureRosterCard(kind, id, week) {
+    if (typeof html2canvas !== 'function') {
+        showToast('Image export library failed to load. Check your network / CDN.');
+        return null;
+    }
+    const card = findRosterExportCard(kind, id, week);
+    if (!card) {
+        showToast('Could not find roster to export.');
+        return null;
+    }
+    const target = card.querySelector('.roster-export-target') || card;
+
+    document.body.classList.add('roster-capturing');
+    try {
+        const canvas = await html2canvas(target, {
+            backgroundColor: '#ffffff',
+            scale: Math.min(2, window.devicePixelRatio || 2),
+            useCORS: true,
+            logging: false,
+            // Avoid capturing sticky quirks / offscreen overflow poorly
+            scrollX: 0,
+            scrollY: -window.scrollY
+        });
+        return canvas;
+    } catch (err) {
+        console.error(err);
+        showToast('Failed to create image.');
+        return null;
+    } finally {
+        document.body.classList.remove('roster-capturing');
+    }
+}
+
+async function exportRosterImage(kind, id, week) {
+    const canvas = await captureRosterCard(kind, id, week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+    downloadBlob(blob, rosterShareFileName(kind, id, week));
+    showToast('Image downloaded.');
+}
+
+async function shareRosterWhatsApp(kind, id, week) {
+    const canvas = await captureRosterCard(kind, id, week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+
+    const filename = rosterShareFileName(kind, id, week);
+    const text = rosterShareText(kind, id, week);
+    const file = new File([blob], filename, { type: 'image/png' });
+
+    // Best path: native share sheet (mobile Chrome/Safari) → user picks WhatsApp
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: 'Duty roster', text });
+            showToast('Shared.');
+            return;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return; // user cancelled
+            console.warn('share failed, falling back', err);
+        }
+    }
+
+    // Fallback: download image + open WhatsApp with caption (user attaches image manually)
+    downloadBlob(blob, filename);
+    const waUrl = 'https://wa.me/?text=' + encodeURIComponent(text + '\n\n(Image downloaded — attach it in the chat.)');
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    showToast('Image downloaded. Attach it in WhatsApp.');
+}
+
+function bindRosterExportActions() {
+    document.querySelectorAll('[data-roster-export-img]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.rosterExportImg;
+            const id = btn.dataset.id;
+            const week = btn.dataset.week;
+            btn.disabled = true;
+            try { await exportRosterImage(kind, id, week); }
+            finally { btn.disabled = false; }
+        });
+    });
+    document.querySelectorAll('[data-roster-share-wa]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.rosterShareWa;
+            const id = btn.dataset.id;
+            const week = btn.dataset.week;
+            btn.disabled = true;
+            try { await shareRosterWhatsApp(kind, id, week); }
+            finally { btn.disabled = false; }
+        });
+    });
+}
+
+
+function getStoresBundle(week) {
+    return document.querySelector(`.roster-stores-bundle[data-week="${week}"]`)
+        || document.querySelector('.roster-stores-bundle');
+}
+
+async function captureStoresBundle(week) {
+    if (typeof html2canvas !== 'function') {
+        showToast('Image export library failed to load.');
+        return null;
+    }
+    const bundle = getStoresBundle(week);
+    if (!bundle) {
+        showToast('No store rosters on screen to export.');
+        return null;
+    }
+    // Need at least one store card
+    if (!bundle.querySelector('.card, .roster-export-card')) {
+        showToast('No store rosters to export.');
+        return null;
+    }
+
+    document.body.classList.add('roster-capturing');
+    try {
+        // Scroll bundle into view for more reliable capture
+        bundle.scrollIntoView({ block: 'nearest' });
+        const canvas = await html2canvas(bundle, {
+            backgroundColor: '#ffffff',
+            scale: Math.min(2, window.devicePixelRatio || 1.5),
+            useCORS: true,
+            logging: false,
+            scrollX: 0,
+            scrollY: -window.scrollY,
+            windowWidth: document.documentElement.scrollWidth,
+            windowHeight: bundle.scrollHeight + 40
+        });
+        return canvas;
+    } catch (err) {
+        console.error(err);
+        showToast('Failed to create combined image.');
+        return null;
+    } finally {
+        document.body.classList.remove('roster-capturing');
+    }
+}
+
+function canvasToBlob(canvas) {
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+}
+
+function allStoresShareName(week) {
+    const who = STATE.user?.role === 'admin' ? 'all-stores' : 'my-stores';
+    return `duty-rosters-${who}-${week}.png`;
+}
+
+function allStoresShareText(week) {
+    let range = week;
+    try {
+        const dates = weekDates(week);
+        range = `${dates[0]} – ${dates[6]}`;
+    } catch { /* ignore */ }
+    const n = document.querySelectorAll('.roster-stores-bundle .card, .roster-stores-bundle .roster-export-card').length;
+    const name = STATE.user?.name || 'Area Manager';
+    return `Duty rosters (${n} store${n === 1 ? '' : 's'}) — ${name} — week ${range}`;
+}
+
+async function exportAllStoreRosters(week) {
+    const canvas = await captureStoresBundle(week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+    downloadBlob(blob, allStoresShareName(week));
+    showToast('Combined roster image downloaded.');
+}
+
+async function shareAllStoreRostersWhatsApp(week) {
+    const canvas = await captureStoresBundle(week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+
+    const filename = allStoresShareName(week);
+    const text = allStoresShareText(week);
+    const file = new File([blob], filename, { type: 'image/png' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: 'Duty rosters', text });
+            showToast('Shared.');
+            return;
+        } catch (err) {
+            if (err?.name === 'AbortError') return;
+            console.warn(err);
+        }
+    }
+
+    downloadBlob(blob, filename);
+    window.open(
+        'https://wa.me/?text=' + encodeURIComponent(text + '\n\n(Image downloaded — attach it in the chat.)'),
+        '_blank',
+        'noopener,noreferrer'
+    );
+    showToast('Image downloaded. Attach it in WhatsApp.');
+}
+
+function bindRosterBulkExport() {
+    document.querySelectorAll('[data-roster-export-all]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await exportAllStoreRosters(btn.dataset.week); }
+            finally { btn.disabled = false; }
+        });
+    });
+    document.querySelectorAll('[data-roster-share-all-wa]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await shareAllStoreRostersWhatsApp(btn.dataset.week); }
+            finally { btn.disabled = false; }
+        });
     });
 }
 

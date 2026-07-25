@@ -870,3 +870,39 @@ tr:last-child td{border-bottom:none;}
     border: 1px solid var(--line);
     background: #fff;
 }
+.roster-export-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.roster-export-actions .btn {
+    white-space: nowrap;
+}
+/* Cleaner capture: hide export buttons inside the snapshot target if you ever nest them */
+.roster-export-target .roster-export-actions { display: none; }
+
+/* Optional: hide interactive chrome while capturing */
+body.roster-capturing .roster-export-actions,
+body.roster-capturing .modal-actions,
+body.roster-capturing .roster-add-btn,
+body.roster-capturing .chip-x {
+    visibility: hidden !important;
+}
+.roster-bulk-export {
+    border: 1px dashed var(--line);
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+}
+/* While capturing the bundle, hide per-card export buttons & edit chrome */
+body.roster-capturing .roster-export-actions,
+body.roster-capturing .roster-bulk-export,
+body.roster-capturing .modal-actions,
+body.roster-capturing .roster-add-btn,
+body.roster-capturing .chip-x {
+    visibility: hidden !important;
+}
+
+/* Slightly tighter cards in the snapshot */
+body.roster-capturing .roster-stores-bundle .card {
+    break-inside: avoid;
+    box-shadow: none;
+}
