@@ -15,7 +15,7 @@ import {
 } from './app.js';
 
 export function renderLogin() {
-    const demo = [['Admin / Owner', 'sanket.baheti', 'admin123'], ['Area Manager', 'dinesh.pardeshi', 'area123'], ['Store Manager', 'sundar.maske', 'manager123'], ['Sales Staff', 'adarsh.palkhe', 'staff123'],];
+    const demo = [['Admin / Owner', 'sanket', 'admin123'], ['Area Manager', 'dinesh.pardeshi', 'area123'], ['Store Manager', 'sundar.maske', 'manager123'], ['Sales Staff', 'adarsh.palkhe', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
@@ -28,12 +28,6 @@ export function renderLogin() {
         <div class="field"><label>Password</label><input type="password" id="loginPassword" required placeholder="••••••••"></div>
         <button class="btn btn-primary btn-block" type="submit">Sign in</button>
       </form>
-      // <details class="demo-accounts">
-      //   <summary>Demo accounts (tap to autofill)</summary>
-      //   <div class="demo-list">
-      //     ${demo.map(d => `<div class="demo-row" data-email="${esc(d[1])}" data-pass="${esc(d[2])}"><span><b>${esc(d[0])}</b></span><span class="mono">${esc(d[1])}</span></div>`).join('')}
-      //   </div>
-      // </details>
     </div>
   </div>`;
 }
