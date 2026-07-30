@@ -1,6 +1,44 @@
 import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
 import {DAY_KEYS, distanceMeters} from './helpers.js';
 
+const RETRY_DELAYS_MS = [0, 1500, 4000];
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url, options = {}, label = 'request') {
+    let lastError = null;
+
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay) await sleep(delay);
+
+        try {
+            const response = await fetch(url, options);
+            if (response.ok) return response;
+
+            const bodyText = await response.text().catch(() => '');
+            lastError = new Error(`${label} failed: ${response.status}${bodyText ? ` ${bodyText}` : ''}`);
+
+            if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+                break;
+            }
+        } catch (e) {
+            lastError = e;
+        }
+    }
+
+    throw lastError || new Error(`${label} failed`);
+}
+
+function sharedHeaders(includeJson = false) {
+    const headers = {};
+    if (includeJson) headers['Content-Type'] = 'application/json';
+    if (API_KEY) headers['x-api-key'] = API_KEY;
+    return headers;
+}
+
 export async function saveKey(key, value, shared) {
     try {
         if (!shared) {
@@ -8,11 +46,11 @@ export async function saveKey(key, value, shared) {
             else localStorage.setItem(key, JSON.stringify(value));
             return true;
         }
-        const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
+        const response = await fetchWithRetry(`${BACKEND_API_URL}/api/storage/${key}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+            headers: sharedHeaders(true),
             body: JSON.stringify({ value })
-        });
+        }, `Save ${key}`);
         if (!response.ok) {
             const text = await response.text();
             throw new Error(`Save ${key} failed: ${response.status} ${text}`);
@@ -30,12 +68,9 @@ export async function loadKey(key, shared) {
             const localData = localStorage.getItem(key);
             return localData ? JSON.parse(localData) : null;
         }
-        const response = await fetch(`${BACKEND_API_URL}/api/storage/${key}`, {
-            headers: { 'x-api-key': API_KEY }});
-        if (!response.ok) {
-            console.error('Load failed', key, response.status);
-            return null;
-        }
+        const response = await fetchWithRetry(`${BACKEND_API_URL}/api/storage/${key}`, {
+            headers: sharedHeaders()
+        }, `Load ${key}`);
         return await response.json();
     } catch (e) {
         console.error('Load failed', key, e);
@@ -45,10 +80,9 @@ export async function loadKey(key, shared) {
 
 export async function loadUsersSafe() {
     try {
-        const response = await fetch(`${BACKEND_API_URL}/api/users`, {
-            headers: { 'x-api-key': API_KEY }
-        });
-        if (!response.ok) return null;
+        const response = await fetchWithRetry(`${BACKEND_API_URL}/api/users`, {
+            headers: sharedHeaders()
+        }, 'Load users');
         return await response.json();
     } catch (e) {
         console.error('Load users failed', e);
@@ -58,12 +92,11 @@ export async function loadUsersSafe() {
 
 export async function loginRequest(email, password) {
     try {
-        const response = await fetch(`${BACKEND_API_URL}/api/login`, {
+        const response = await fetchWithRetry(`${BACKEND_API_URL}/api/login`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+            headers: sharedHeaders(true),
             body: JSON.stringify({ email, password })
-        });
-        if (!response.ok) return null;
+        }, 'Login');
         return await response.json(); // safe user, no password
     } catch (e) {
         console.error('Login failed', e);
@@ -151,12 +184,6 @@ export function seedData() {
         { id: 'u_staff_17', name: 'Pranav', email: 'pranav', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true },
         { id: 'u_staff_18', name: 'Yash', email: 'yash', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true }
     ];
-    // const staffNames = [
-    //     ['Adarsh Palkhe','st_a']
-    // ];
-    // staffNames.forEach((s, i) => {
-    //     users.push({ id: 'u_staff' + i, name: s[0], email: 'staff' + (i + 1), password: 'staff123', role: 'sales_staff', storeId: s[1], storeIds: null, active: true });
-    // });
     const taskTitles = ['Open store & turn on system', 'Clean & organize display', 'Close store & lock up'];
     const taskTemplates = [];
     stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true, assignedTo: null, recurrence: { type: 'daily' } }); }); });
@@ -181,7 +208,6 @@ export function employeesForUser(u) {
     return [];
 }
 
-// New: unified "team" helper used by Dashboard, Attendance, Team, Reports
 export function teamForUser(u) {
     if (!u) return [];
     const ids = storeIdsForUser(u);
@@ -198,7 +224,6 @@ export function teamForUser(u) {
     return [];
 }
 
-// New: find which store (if any) an area manager punched into today
 export function todayStoreIdFor(userId, attendance, dateStr) {
     const rec = attendance.find(a => a.userId === userId && a.date === dateStr);
     return rec ? rec.storeId : null;
@@ -244,7 +269,7 @@ export function amRosterFor(userId, weekStart) {
     return STATE.dutyRosters.find(r => r.type === 'am' && r.userId === userId && r.weekStart === weekStart);
 }
 
-export function amVisitsForStore(storeId, weekStart) { // NEW
+export function amVisitsForStore(storeId, weekStart) {
     return STATE.dutyRosters
         .filter(r => r.type === 'am' && r.weekStart === weekStart && r.status !== 'draft')
         .map(r => {
