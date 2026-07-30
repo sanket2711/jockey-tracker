@@ -27,17 +27,8 @@ export const STATE = {
     rosterEditingId: null
 };
 
-export const BACKEND_API_URL = 'https://jockey-tracker.onrender.com';
+export const BACKEND_API_URL = "https://jockey-tracker.onrender.com";
 export const SHIFT_START_MIN = 9 * 60 + 30; // keep as global fallback
 export const GRACE_MIN = 15;
 export const RADIUS_M = 100;
-
-function resolveApiKey() {
-    const fromWindow = typeof window !== 'undefined' ? window.__API_KEY__ : undefined;
-    const fromMeta = typeof document !== 'undefined'
-        ? document.querySelector('meta[name="x-api-key"]')?.content
-        : undefined;
-    return fromWindow || fromMeta || '';
-}
-
-export const API_KEY = resolveApiKey();
+export const API_KEY= "ab55035076cb427d5a74e9a0d842791b";
