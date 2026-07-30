@@ -1080,36 +1080,34 @@ function rosterShareText(kind, id, week) {
 }
 
 async function captureRosterCard(kind, id, week) {
-    if (typeof html2canvas !== 'function') {
-        showToast('Image export library failed to load. Check your network / CDN.');
-        return null;
-    }
-    const card = findRosterExportCard(kind, id, week);
-    if (!card) {
-        showToast('Could not find roster to export.');
-        return null;
-    }
-    const target = card.querySelector('.roster-export-target') || card;
+    const html = kind === 'am'
+        ? buildAmExportReport(id, week)
+        : buildStoreExportReport(id, week);
 
-    document.body.classList.add('roster-capturing');
-    try {
-        const canvas = await html2canvas(target, {
-            backgroundColor: '#ffffff',
-            scale: Math.min(2, window.devicePixelRatio || 2),
-            useCORS: true,
-            logging: false,
-            // Avoid capturing sticky quirks / offscreen overflow poorly
-            scrollX: 0,
-            scrollY: -window.scrollY
-        });
-        return canvas;
-    } catch (err) {
-        console.error(err);
-        showToast('Failed to create image.');
+    if (!html) {
+        showToast('No roster data found to export.');
         return null;
-    } finally {
-        document.body.classList.remove('roster-capturing');
     }
+
+    return captureRosterExportHtml(html, { scale: 2 });
+}
+
+async function captureStoresBundle(week) {
+    const storeIds = STATE.user?.role === 'admin'
+        ? STATE.stores.map(store => store.id)
+        : storeIdsForUser(STATE.user);
+
+    const reports = storeIds
+        .map(storeId => buildStoreExportReport(storeId, week))
+        .filter(Boolean)
+        .join('');
+
+    if (!reports) {
+        showToast('No store rosters found to export.');
+        return null;
+    }
+
+    return captureRosterExportHtml(reports, { scale: 1.25 });
 }
 
 async function exportRosterImage(kind, id, week) {
@@ -1177,46 +1175,6 @@ function bindRosterExportActions() {
 function getStoresBundle(week) {
     return document.querySelector(`.roster-stores-bundle[data-week="${week}"]`)
         || document.querySelector('.roster-stores-bundle');
-}
-
-async function captureStoresBundle(week) {
-    if (typeof html2canvas !== 'function') {
-        showToast('Image export library failed to load.');
-        return null;
-    }
-    const bundle = getStoresBundle(week);
-    if (!bundle) {
-        showToast('No store rosters on screen to export.');
-        return null;
-    }
-    // Need at least one store card
-    if (!bundle.querySelector('.card, .roster-export-card')) {
-        showToast('No store rosters to export.');
-        return null;
-    }
-
-    document.body.classList.add('roster-capturing');
-    try {
-        // Scroll bundle into view for more reliable capture
-        bundle.scrollIntoView({ block: 'nearest' });
-        const canvas = await html2canvas(bundle, {
-            backgroundColor: '#ffffff',
-            scale: Math.min(2, window.devicePixelRatio || 1.5),
-            useCORS: true,
-            logging: false,
-            scrollX: 0,
-            scrollY: -window.scrollY,
-            windowWidth: document.documentElement.scrollWidth,
-            windowHeight: bundle.scrollHeight + 40
-        });
-        return canvas;
-    } catch (err) {
-        console.error(err);
-        showToast('Failed to create combined image.');
-        return null;
-    } finally {
-        document.body.classList.remove('roster-capturing');
-    }
 }
 
 function canvasToBlob(canvas) {
@@ -1348,6 +1306,244 @@ function bindRosterBulkExport() {
             finally { btn.disabled = false; }
         });
     });
+}
+
+function exportEsc(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+}
+
+function exportWeekLabel(weekStart) {
+    const dates = weekDates(weekStart);
+    return `${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}`;
+}
+
+function exportDateLabel(date) {
+    const dt = new Date(`${date}T00:00:00`);
+
+    return dt.toLocaleDateString([], {
+        day: '2-digit',
+        month: 'short'
+    });
+}
+
+function exportDutyLabel(type) {
+    const labels = {
+        shift1: 'SHIFT 1',
+        shift2: 'SHIFT 2',
+        half_day: 'HALF DAY',
+        weekly_off: 'WEEKLY OFF',
+        leave: 'LEAVE',
+        cross_store: 'CROSS-STORE VISIT'
+    };
+    return labels[type] || String(type || '').replace(/_/g, ' ').toUpperCase();
+}
+
+function exportDutyClass(type) {
+    return {
+        shift1: 'export-duty-shift1',
+        shift2: 'export-duty-shift2',
+        half_day: 'export-duty-halfday',
+        weekly_off: 'export-duty-weekoff',
+        leave: 'export-duty-leave',
+        cross_store: 'export-duty-cross'
+    }[type] || '';
+}
+
+function exportTypeOrder() {
+    return ['shift1', 'shift2', 'half_day', 'weekly_off', 'leave', 'cross_store'];
+}
+
+/**
+ * Returns the names/details assigned to a duty type for one day.
+ * This reads roster data directly rather than depending on rendered UI.
+ */
+function exportStoreCell(roster, type, dayKey) {
+    const assigned = (roster.entries || [])
+        .filter(entry => entry.days?.[dayKey] === type)
+        .map(entry => {
+            const staff = STATE.users.find(user => user.id === entry.userId);
+            if (!staff) return null;
+
+            if (type === 'cross_store') {
+                const cross = entry.cross?.[dayKey];
+                const targetStore = cross?.storeId ? storeName(cross.storeId) : 'Store not selected';
+                const targetShift = exportDutyLabel(cross?.shiftType || '');
+                return `${staff.name} · ${targetStore}${targetShift ? ` / ${targetShift}` : ''}`;
+            }
+
+            return staff.name;
+        })
+        .filter(Boolean);
+
+    return assigned.length
+        ? assigned.map(name => `<span class="export-staff-chip">${exportEsc(name)}</span>`).join('')
+        : '<span class="export-empty">—</span>';
+}
+
+function hasExportAssignments(roster, type) {
+    return DAY_KEYS.some(dayKey =>
+        (roster.entries || []).some(entry => entry.days?.[dayKey] === type)
+    );
+}
+
+function buildStoreExportReport(storeId, weekStart) {
+    const store = STATE.stores.find(item => item.id === storeId);
+    const roster = STATE.dutyRosters.find(item =>
+        item.type === 'store' &&
+        item.storeId === storeId &&
+        item.weekStart === weekStart
+    );
+
+    if (!store || !roster) return '';
+
+    const dates = weekDates(weekStart);
+
+    // Do not show completely unused shift/duty types for this store.
+    const activeTypes = exportTypeOrder().filter(type =>
+        hasExportAssignments(roster, type)
+    );
+
+    const head = dates.map((date, index) => `
+        <th>
+            <span class="export-day">${exportEsc(DAY_KEYS[index].toUpperCase())}</span>
+            <span class="export-date">${exportEsc(fmtDateShort(date))}</span>
+        </th>
+    `).join('');
+
+    const body = activeTypes.map(type => `
+        <tr class="${exportDutyClass(type)}">
+            <th scope="row">${exportDutyLabel(type)}</th>
+            ${DAY_KEYS.map(dayKey => `
+                <td>${exportStoreCell(roster, type, dayKey)}</td>
+            `).join('')}
+        </tr>
+    `).join('');
+
+    const submittedBy = roster.submittedBy ? userName(roster.submittedBy) : '';
+    const approvedBy = roster.decidedBy ? userName(roster.decidedBy) : '';
+
+    return `
+        <section class="duty-export-report">
+            <header class="duty-export-header">
+                <div>
+                    <div class="duty-export-store">${exportEsc(store.name)}</div>
+                    <div class="duty-export-subtitle">Weekly Duty Roster</div>
+                </div>
+                <div class="duty-export-week">${exportEsc(exportWeekLabel(weekStart))}</div>
+            </header>
+
+            <table class="duty-export-table">
+                <thead>
+                    <tr>
+                        <th class="export-duty-heading">DUTY TYPE</th>
+                        ${head}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${body || `
+                        <tr>
+                            <td colspan="8" class="export-no-records">
+                                No duty assignments available for this week.
+                            </td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+
+            <footer class="duty-export-footer">
+                ${submittedBy ? `Submitted by ${exportEsc(submittedBy)}` : ''}
+                ${submittedBy && approvedBy ? ' · ' : ''}
+                ${approvedBy ? `Approved by ${exportEsc(approvedBy)}` : ''}
+            </footer>
+        </section>
+    `;
+}
+
+function buildAmExportReport(amUserId, weekStart) {
+    const am = STATE.users.find(user => user.id === amUserId);
+    const roster = STATE.dutyRosters.find(item =>
+        item.type === 'am' &&
+        item.userId === amUserId &&
+        item.weekStart === weekStart
+    );
+
+    if (!am || !roster) return '';
+
+    const dates = weekDates(weekStart);
+
+    const cells = DAY_KEYS.map((dayKey, index) => {
+        const day = roster.days?.[dayKey] || {};
+        const type = day.type || '';
+        const store = day.storeId ? storeName(day.storeId) : '';
+
+        const value = type === 'weekly_off' || type === 'leave'
+            ? exportDutyLabel(type)
+            : `${exportDutyLabel(type)}${store ? ` · ${store}` : ''}`;
+
+        return `
+            <td>
+                <div class="export-am-day">${exportEsc(DAY_KEYS[index].toUpperCase())}</div>
+                <div class="export-am-date">${exportEsc(exportDateLabel(dates[index]))}</div>
+                <span class="export-staff-chip">${exportEsc(value || '—')}</span>
+            </td>
+        `;
+    }).join('');
+
+    return `
+        <section class="duty-export-report">
+            <header class="duty-export-header">
+                <div>
+                    <div class="duty-export-store">${exportEsc(am.name)}</div>
+                    <div class="duty-export-subtitle">Area Manager Visit Plan</div>
+                </div>
+                <div class="duty-export-week">${exportEsc(exportWeekLabel(weekStart))}</div>
+            </header>
+
+            <table class="duty-export-table duty-export-am-table">
+                <thead>
+                    <tr>${DAY_KEYS.map(dayKey => `<th>${exportEsc(dayKey.toUpperCase())}</th>`).join('')}</tr>
+                </thead>
+                <tbody><tr>${cells}</tr></tbody>
+            </table>
+        </section>
+    `;
+}
+
+async function captureRosterExportHtml(html, { scale = 1.5 } = {}) {
+    if (typeof html2canvas !== 'function') {
+        showToast('Image export library failed to load.');
+        return null;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'duty-export-host';
+    host.innerHTML = html;
+
+    document.body.appendChild(host);
+
+    try {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+
+        const width = Math.ceil(host.scrollWidth);
+        const height = Math.ceil(host.scrollHeight);
+
+        return await html2canvas(host, {
+            backgroundColor: '#ffffff',
+            scale,
+            useCORS: true,
+            logging: false,
+            width,
+            height,
+            windowWidth: width,
+            windowHeight: height,
+            scrollX: 0,
+            scrollY: 0
+        });
+    } finally {
+        host.remove();
+    }
 }
 
 init();
