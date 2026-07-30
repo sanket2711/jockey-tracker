@@ -8,7 +8,7 @@ app.use(express.json());
 
 const allowedOrigins = [
   process.env.FRONTEND_URL,
-  'https://jockey-tracker-three.vercel.app',
+  'https://jockey-tracker-three.vercel.app'
 ].filter(Boolean);
 
 app.use(cors({
