@@ -15,7 +15,7 @@ import {
 } from './app.js';
 
 export function renderLogin() {
-    const demo = [['Admin / Owner', 'sanketbaheti1@gmail.com', 'admin123'], ['Area Manager', 'dinesh.area@sge.demo', 'area123'], ['Store Manager', 'sundar.manager@sge.demo', 'manager123'], ['Sales Staff', 'staff1@sge.demo', 'staff123'],];
+    const demo = [['Admin / Owner', 'sanket.baheti', 'admin123'], ['Area Manager', 'dinesh.pardeshi', 'area123'], ['Store Manager', 'sundar.maske', 'manager123'], ['Sales Staff', 'adarsh.palkhe', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
@@ -24,16 +24,16 @@ export function renderLogin() {
       <p class="lead">Track attendance, tasks and leave across all your stores.</p>
       <div id="loginError"></div>
       <form id="loginForm">
-        <div class="field"><label>Email</label><input type="email" id="loginEmail" required placeholder="you@storeflow.demo"></div>
+        <div class="field"><label>User Name</label><input type="text" id="loginEmail" required ></div>
         <div class="field"><label>Password</label><input type="password" id="loginPassword" required placeholder="••••••••"></div>
         <button class="btn btn-primary btn-block" type="submit">Sign in</button>
       </form>
-      <details class="demo-accounts">
-        <summary>Demo accounts (tap to autofill)</summary>
-        <div class="demo-list">
-          ${demo.map(d => `<div class="demo-row" data-email="${esc(d[1])}" data-pass="${esc(d[2])}"><span><b>${esc(d[0])}</b></span><span class="mono">${esc(d[1])}</span></div>`).join('')}
-        </div>
-      </details>
+      // <details class="demo-accounts">
+      //   <summary>Demo accounts (tap to autofill)</summary>
+      //   <div class="demo-list">
+      //     ${demo.map(d => `<div class="demo-row" data-email="${esc(d[1])}" data-pass="${esc(d[2])}"><span><b>${esc(d[0])}</b></span><span class="mono">${esc(d[1])}</span></div>`).join('')}
+      //   </div>
+      // </details>
     </div>
   </div>`;
 }
@@ -704,7 +704,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
 
       <form id="modalEmployeeForm" class="stack-form">
         <div class="field"><label>Full Name</label><input type="text" id="empName" required></div>
-        <div class="field"><label>Email Address</label><input type="email" id="empEmail" required></div>
+        <div class="field"><label>User Name</label><input type="text" id="empEmail" required></div>
         <div class="field"><label>Password</label><input type="text" id="empPass" value="staff123" required></div>
 
         <div class="field">
@@ -947,7 +947,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
 
       <form id="editEmployeeForm" class="stack-form">
         <div class="field"><label>Full Name</label><input type="text" id="editEmpName" value="${esc(emp.name)}" required></div>
-        <div class="field"><label>Email Address</label><input type="email" id="editEmpEmail" value="${esc(emp.email)}" required disabled></div>
+        <div class="field"><label>User Name</label><input type="text" id="editEmpEmail" value="${esc(emp.email)}" required disabled></div>
         <div class="field"><label>Role</label><select id="editEmpRole">${roleOptions}</select></div>
         <div class="field" id="editSingleStoreField" style="${emp.role === 'area_manager' ? 'display:none;' : ''}">
           <label>Assigned Store</label><select id="editEmpStore">${singleStoreOptions}</select>
