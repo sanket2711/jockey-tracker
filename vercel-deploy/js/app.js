@@ -1,16 +1,27 @@
 import { STATE, RADIUS_M } from './config.js';
-import {uid, todayStr, localDateStr, distanceMeters, isLateAt, computeUnderOverMinutes} from './helpers.js';
+import {
+    uid,
+    todayStr,
+    localDateStr,
+    distanceMeters,
+    isLateAt,
+    computeUnderOverMinutes,
+    DAY_KEYS,
+    weekDates, fmtDateShort
+} from './helpers.js';
 import {
     loadKey, saveKey, seedData, employeesForUser,
     persistInstances, persistTemplates, persistAttendance,
-    persistLeaves, persistUsers, persistStores
+    persistLeaves, persistUsers, loadUsersSafe, loginRequest, nearestStore, authorizedStoreIdsFor,
+    persistDutyRosters, activeStaffForStore, approvedLeaveForDay, userName, storeName, storeIdsForUser
 } from './services.js';
 import {
     renderLogin, navItemsFor, pageTitle, pageSubtitle,
     renderDashboard, renderAttendancePage, renderTasksPage,
     renderLeavePage, renderReportsPage, renderTeamPage, renderStoresPage,
     addEmployeeModal, addStoreModal, manualPunchModal,
-    editEmployeeModal, editStoreModal, createTaskModal
+    editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage,
+    openRejectReasonModal, DAY_TYPE_OPTIONS
 } from './views.js';
 
 /* Export sub-lifecycle indicators out to templates safely */
@@ -92,7 +103,8 @@ export function monthlyReport(userId, monthDate) {
             status = 'pending';
         } else if (isPunchCountable(rec)) {
             status = rec.late ? 'late' : 'present';
-            rec.late ? late++ : present++;
+            rec.late ? late++ : null;
+            present++;
 
             const store = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
             const diffMin = computeUnderOverMinutes(rec, store);
@@ -109,19 +121,42 @@ export function monthlyReport(userId, monthDate) {
     return { present, late, absent, leave, totalUnderMin, totalOverMin, rows };
 }
 
-function showToast(msg) {
-    STATE.toast = msg; render();
-    setTimeout(() => { STATE.toast = null; render(); }, 2800);
+export function showToast(msg) {
+    STATE.toast = msg;
+
+    // Remove any existing toast
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    document.body.appendChild(el);
+
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => {
+        STATE.toast = null;
+        el.remove();
+    }, 2800);
 }
 
 /* Auth functions */
 async function login(email, password) {
-    const u = STATE.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase() && x.password === password && x.active !== false);
+    const u = await loginRequest(email, password);
     if (!u) return false;
-    STATE.user = u; STATE.page = 'dashboard'; STATE.navOpen = false;
+    STATE.user = u;
+    STATE.page = 'dashboard'; STATE.navOpen = false;
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
+    STATE.attendanceFilterStoreIds = [];
+    STATE.attendanceFilterStaffIds = [];
+    STATE.teamFilterStoreIds = [];
+    STATE.teamFilterStaffIds = [];
     STATE.activeDropdown = null;
+    STATE.punchStatus = '';
+    STATE.punchOk = null;
+    STATE.punchShift = null;
+    STATE.punchStoreId = null;
+    STATE.page = u.mustChangePassword ? 'forcePasswordChange' : 'dashboard';
     await saveKey('session', u.id, false);
     return true;
 }
@@ -130,13 +165,22 @@ async function logout() {
     STATE.user = null;
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
+    STATE.attendanceFilterStoreIds = [];
+    STATE.attendanceFilterStaffIds = [];
+    STATE.teamFilterStoreIds = [];
+    STATE.teamFilterStaffIds = [];
     STATE.activeDropdown = null;
+    STATE.punchStatus = '';
+    STATE.punchOk = null;
+    STATE.punchShift = null;
+    STATE.punchStoreId = null;
     await saveKey('session', null, false);
     render();
 }
 
 /* Master Engine Orchestrator Lifecycle */
 export function render() {
+    if (document.getElementById('activeModal')) return;
     const root = document.getElementById('root');
     if (!STATE.ready) {
         root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8992A1;font-family:Inter,sans-serif;">Loading ShiftLedger…</div>';
@@ -145,6 +189,13 @@ export function render() {
     if (!STATE.user) {
         root.innerHTML = renderLogin();
         attachLoginEvents();
+        return;
+    }
+
+    if (STATE.user.mustChangePassword) {
+        root.innerHTML = renderForcePasswordChange();
+        const form = document.getElementById('forcePasswordForm');
+        if (form) form.addEventListener('submit', handleForcePasswordChange);
         return;
     }
 
@@ -194,6 +245,7 @@ function renderPage() {
         case 'attendance': return renderAttendancePage();
         case 'tasks': return renderTasksPage();
         case 'leave': return renderLeavePage();
+        case 'roster': return renderDutyRosterPage();
         case 'reports': return renderReportsPage();
         case 'team': return renderTeamPage();
         case 'stores': return renderStoresPage();
@@ -222,7 +274,8 @@ function attachAppEvents() {
     let punchStoreSel = document.getElementById('punchStore');
     if (punchStoreSel) {
         punchStoreSel.addEventListener('change', () => {
-            STATE.punchStoreId = punchStoreSel.value;
+            STATE.punchStoreId = punchStoreSel.value || null;
+            render();
         });
     }
 
@@ -260,7 +313,35 @@ function attachAppEvents() {
     const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
     const punchInBtn = document.getElementById('punchInBtn'); if (punchInBtn) punchInBtn.addEventListener('click', handlePunchIn);
     const punchOutBtn = document.getElementById('punchOutBtn'); if (punchOutBtn) punchOutBtn.addEventListener('click', handlePunchOut);
-    const manualPunchBtn = document.getElementById('manualPunchBtn'); if (manualPunchBtn) manualPunchBtn.addEventListener('click', () => manualPunchModal(render, showToast, uid));
+    const manualPunchBtn = document.getElementById('manualPunchBtn');
+    if (manualPunchBtn) manualPunchBtn.addEventListener('click', async () => {
+        const u = STATE.user;
+        const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
+        if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
+
+        manualPunchBtn.disabled = true;
+        const originalText = manualPunchBtn.textContent;
+        manualPunchBtn.textContent = 'Checking location…';
+        STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
+
+        try {
+            const pos = await geoOnce();
+            const { latitude, longitude, accuracy } = pos.coords;
+            const result = nearestStore(latitude, longitude);
+            if (!result) { STATE.punchStatus = 'No stores configured.'; STATE.punchOk = false; render(); return; }
+            const loc = { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) };
+            STATE.punchStatus = ''; STATE.punchOk = null; render();
+            manualPunchModal(render, showToast, uid, loc, result.store.id, shiftNumber, u.storeId || null);
+        } catch (err) {
+            STATE.punchStatus = 'Location error: ' + (err.message || 'denied.');
+            STATE.punchOk = false;
+            render();
+        } finally {
+            manualPunchBtn.disabled = false;
+            manualPunchBtn.textContent = originalText;
+        }
+    });
+
     punchStoreSel = document.getElementById('punchStore'); if (punchStoreSel) punchStoreSel.addEventListener('change', () => { STATE.punchStoreId = punchStoreSel.value; });
 
     document.querySelectorAll('[data-punch-approve]').forEach(el => el.addEventListener('click', async () => {
@@ -412,36 +493,255 @@ function attachAppEvents() {
         });
     });
 
+    // Attendance filters
+    document.querySelectorAll('.att-store-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.attendanceFilterStoreIds) STATE.attendanceFilterStoreIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.attendanceFilterStoreIds.includes(val)) STATE.attendanceFilterStoreIds.push(val);
+            } else {
+                STATE.attendanceFilterStoreIds = STATE.attendanceFilterStoreIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+    document.querySelectorAll('.att-staff-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.attendanceFilterStaffIds) STATE.attendanceFilterStaffIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.attendanceFilterStaffIds.includes(val)) STATE.attendanceFilterStaffIds.push(val);
+            } else {
+                STATE.attendanceFilterStaffIds = STATE.attendanceFilterStaffIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+
+// Team filters
+    document.querySelectorAll('.team-store-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.teamFilterStoreIds) STATE.teamFilterStoreIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.teamFilterStoreIds.includes(val)) STATE.teamFilterStoreIds.push(val);
+            } else {
+                STATE.teamFilterStoreIds = STATE.teamFilterStoreIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+    document.querySelectorAll('.team-staff-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (!STATE.teamFilterStaffIds) STATE.teamFilterStaffIds = [];
+            const val = cb.value;
+            if (cb.checked) {
+                if (!STATE.teamFilterStaffIds.includes(val)) STATE.teamFilterStaffIds.push(val);
+            } else {
+                STATE.teamFilterStaffIds = STATE.teamFilterStaffIds.filter(id => id !== val);
+            }
+            render();
+        });
+    });
+
+    document.querySelectorAll('[data-roster-week]').forEach(el => el.addEventListener('click', () => {
+        STATE.rosterWeekOffset = (STATE.rosterWeekOffset || 0) + parseInt(el.dataset.rosterWeek, 10);
+        render();
+    }));
+
+    document.querySelectorAll('[data-roster-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = el.dataset.rosterEdit; render(); }));
+    document.querySelectorAll('[data-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
+    document.querySelectorAll('[data-am-roster-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = el.dataset.amRosterEdit; render(); }));
+    document.querySelectorAll('[data-am-roster-cancel-edit]').forEach(el => el.addEventListener('click', () => { STATE.rosterEditingId = null; render(); }));
+
+    document.querySelectorAll('.am-roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
+        const days = {};
+        DAY_KEYS.forEach(dk => {
+            const typeSel = form.querySelector(`.am-roster-type-select[data-day="${dk}"]`); // CHANGED: correct class name
+            const storeSel = form.querySelector(`.am-roster-store-select[data-day="${dk}"]`); // NEW: capture the store too
+            const type = typeSel ? typeSel.value : '';
+            const needsStore = ['shift1', 'shift2', 'half_day'].includes(type);
+            days[dk] = { type, storeId: needsStore ? (storeSel ? storeSel.value : '') : '' }; // CHANGED: match the {type, storeId} shape renderAmRosterTable/amVisitsForStore expect
+        });
+        const incomplete = DAY_KEYS.some(dk => !days[dk].type || (['shift1','shift2','half_day'].includes(days[dk].type) && !days[dk].storeId)); // CHANGED
+        if (incomplete) { showToast('Please assign a store or Off for every day.'); return; } // CHANGED: consistent with the rest of the app
+
+        const now = new Date().toISOString();
+        if (existingId) {
+            const rec = STATE.dutyRosters.find(r => r.id === existingId);
+            rec.days = days; rec.status = 'pending_approval';
+            rec.submittedBy = STATE.user.id; rec.submittedAt = now; // CHANGED: resubmission should re-stamp submittedBy like the store roster does
+            rec.editedBy = null; rec.editedAt = null; rec.decidedBy = null; rec.decidedAt = null; rec.rejectionReason = null; // CHANGED: field names aligned with store roster
+        } else {
+            STATE.dutyRosters.push({
+                id: uid(), type: 'am', userId, weekStart, days,
+                status: 'pending_approval', submittedBy: STATE.user.id, submittedAt: now,
+                editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
+            });
+        }
+        STATE.rosterEditingId = null;
+        await persistDutyRosters();
+        showToast(existingId ? 'Visit plan corrections saved. Approval required again.' : 'Visit plan submitted for approval.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
+        const form = btn.closest('.roster-form');
+        if (saveStoreRoster(form, { asDraft: true })) {
+            await persistDutyRosters();
+            showToast('Draft saved. You can continue editing anytime.');
+            render();
+        }
+    }));
+
+    document.querySelectorAll('.roster-form').forEach(form => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (saveStoreRoster(form, { asDraft: false })) {
+            STATE.rosterEditingId = null;
+            await persistDutyRosters();
+            showToast('Roster submitted for approval.');
+            render();
+        }
+    }));
+
+    document.querySelectorAll('[data-roster-delete-draft]').forEach(el => el.addEventListener('click', async () => {
+        const id = el.dataset.rosterDeleteDraft;
+        if (!confirm('Delete this draft? All unsaved progress for this week will be lost.')) return;
+        STATE.dutyRosters = STATE.dutyRosters.filter(r => r.id !== id);
+        await persistDutyRosters();
+        showToast('Draft deleted.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-delete-draft]').forEach(el => el.addEventListener('click', async () => {
+        const id = el.dataset.amRosterDeleteDraft;
+        if (!confirm('Delete this draft visit plan? All unsaved progress for this week will be lost.')) return;
+        STATE.dutyRosters = STATE.dutyRosters.filter(r => r.id !== id);
+        await persistDutyRosters();
+        showToast('Draft visit plan deleted.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-save-draft]').forEach(btn => btn.addEventListener('click', async () => {
+        const form = btn.closest('.am-roster-form');
+        const userId = form.dataset.amUser, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
+        const days = {};
+        DAY_KEYS.forEach(dk => {
+            const typeSel = form.querySelector(`.am-roster-type-select[data-day="${dk}"]`);
+            const storeSel = form.querySelector(`.am-roster-store-select[data-day="${dk}"]`);
+            const type = typeSel ? typeSel.value : '';
+            const needsStore = ['shift1', 'shift2', 'half_day'].includes(type);
+            days[dk] = { type, storeId: needsStore ? (storeSel ? storeSel.value : '') : '' };
+        });
+        const now = new Date().toISOString();
+        if (existingId) {
+            const rec = STATE.dutyRosters.find(r => r.id === existingId);
+            rec.days = days; rec.status = 'draft';
+        } else {
+            STATE.dutyRosters.push({
+                id: uid(), type: 'am', userId, weekStart, days,
+                status: 'draft', submittedBy: null, submittedAt: null,
+                editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
+            });
+        }
+        await persistDutyRosters();
+        showToast('Draft saved. You can continue editing anytime.');
+        render();
+    }));
+
+    document.querySelectorAll('[data-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.rosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString(); // CHANGED: decidedBy not approvedBy
+        rec.rejectionReason = null; // CHANGED: clear any stale reason once approved
+        await persistDutyRosters(); showToast('Roster approved.'); render();
+    }));
+
+    document.querySelectorAll('[data-roster-reject]').forEach(el => el.addEventListener('click', () => {
+        openRejectReasonModal(el.dataset.rosterReject, 'store');
+    }));
+
+    document.querySelectorAll('[data-am-roster-approve]').forEach(el => el.addEventListener('click', async () => {
+        const rec = STATE.dutyRosters.find(r => r.id === el.dataset.amRosterApprove); if (!rec) return;
+        rec.status = 'approved'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString(); // CHANGED
+        rec.rejectionReason = null; // CHANGED
+        await persistDutyRosters(); showToast('Visit plan approved.'); render();
+    }));
+
+    document.querySelectorAll('[data-am-roster-reject]').forEach(el => el.addEventListener('click', () => { // CHANGED
+        openRejectReasonModal(el.dataset.amRosterReject, 'am');
+    }));
+
+    bindRosterExclusiveUI();
+    bindRosterExportActions();
+    bindRosterBulkExport();
+
     if (document.getElementById('liveClock')) tickClock();
 }
 
 async function handlePunchIn() {
     const u = STATE.user;
     const existing = todayRecordFor(u.id);
-    // Punch-in is allowed only once per day. A pending manual request or an already-recorded
-    // punch-in blocks a fresh one; a previously rejected request can be replaced.
-    if (isPunchPending(existing)) { STATE.punchStatus = 'A manual punch-in is awaiting approval.'; STATE.punchOk = false; render(); return; }
+    if (isPunchPending(existing)) { STATE.punchStatus = 'A punch-in is awaiting approval.'; STATE.punchOk = false; render(); return; }
     if (isPunchCountable(existing)) { STATE.punchStatus = 'You have already punched in today.'; STATE.punchOk = false; render(); return; }
-    // Store is fixed for single-store staff/managers; area managers pick it from the widget.
-    const sel = document.getElementById('punchStore');
-    const storeId = sel ? sel.value : u.storeId;
-    const store = STATE.stores.find(s => s.id === storeId);
-    if (!store) { STATE.punchStatus = u.storeId ? 'No store assigned.' : 'Select a store to punch in.'; STATE.punchOk = false; render(); return; }
-    // No default shift is pre-selected — the user must explicitly pick Shift 1 or Shift 2.
+
     const shiftNumber = STATE.punchShift === 2 ? 2 : (STATE.punchShift === 1 ? 1 : null);
     if (!shiftNumber) { STATE.punchStatus = 'Please select a shift before punching in.'; STATE.punchOk = false; render(); return; }
+
     STATE.punchStatus = 'Getting location…'; STATE.punchOk = null; render();
     try {
-        const pos = await geoOnce(); const { latitude, longitude, accuracy } = pos.coords;
-        const dist = distanceMeters(latitude, longitude, store.lat, store.lng);
-        if (dist > RADIUS_M) { STATE.punchStatus = `You're ${Math.round(dist)}m away.`; STATE.punchOk = false; render(); return; }
+        const pos = await geoOnce();
+        const { latitude, longitude, accuracy } = pos.coords;
+
+        const result = nearestStore(latitude, longitude);
+        if (!result) { STATE.punchStatus = 'No stores configured.'; STATE.punchOk = false; render(); return; }
+        const { store: nearest, distance } = result;
+        if (distance > RADIUS_M) {
+            STATE.punchStatus = `You're ${Math.round(distance)}m from the nearest store (${nearest.name}).`;
+            STATE.punchOk = false; render(); return;
+        }
+
+        const authorizedIds = authorizedStoreIdsFor(u);
+        const isAuthorized = authorizedIds.includes(nearest.id);
+
         const now = new Date(), date = localDateStr(now);
-        // Clear any rejected request for today so it doesn't linger alongside the real punch.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
-        const shiftNumber = STATE.punchShift;
-        STATE.attendance.push({ id: uid(), userId: u.id, storeId: store.id, date, checkInTime: now.toISOString(), checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) }, checkOutTime: null, checkOutLoc: null, checkOutHistory: [], shift: shiftNumber, late: isLateAt(now, store, shiftNumber)  });
-        await persistAttendance(); STATE.punchStatus = `Punched in successfully.`; STATE.punchOk = true; STATE.punchShift = null; render();
-    } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
+
+        const record = {
+            id: uid(), userId: u.id,
+            storeId: nearest.id,                  // where they actually punched in
+            homeStoreId: u.storeId || null,        // their assigned store (null for area managers)
+            date, checkInTime: now.toISOString(),
+            checkInLoc: { lat: latitude, lng: longitude, accuracy: Math.round(accuracy) },
+            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
+            shift: shiftNumber, late: isLateAt(now, nearest, shiftNumber)
+        };
+
+        if (isAuthorized) {
+            STATE.attendance.push(record);
+            STATE.punchStatus = `Punched in at ${nearest.name}.`;
+            STATE.punchOk = true;
+        } else {
+            record.approvalStatus = 'pending';
+            record.autoRouted = true;
+            record.requestedAt = now.toISOString();
+            record.decidedBy = null;
+            record.decidedAt = null;
+            STATE.attendance.push(record);
+            STATE.punchStatus = `You're at ${nearest.name} — outside your assigned store. Sent for manager approval.`;
+            STATE.punchOk = null;
+        }
+
+        await persistAttendance();
+        STATE.punchShift = null;
+        render();
+    } catch (err) {
+        STATE.punchStatus = 'Location error: ' + (err.message || 'denied.');
+        STATE.punchOk = false;
+        render();
+    }
 }
 
 async function handlePunchOut() {
@@ -466,6 +766,35 @@ async function handlePunchOut() {
     } catch(err) { STATE.punchStatus = 'Location error: ' + (err.message || 'denied.'); STATE.punchOk = false; render(); }
 }
 
+async function handleForcePasswordChange(e) {
+    e.preventDefault();
+    const u = STATE.user;
+    const newPass = document.getElementById('newPasswordInput').value;
+    const confirmPass = document.getElementById('confirmPasswordInput').value;
+    const errorEl = document.getElementById('forcePassError');
+
+    if (!newPass || newPass.length < 6) {
+        if (errorEl) errorEl.textContent = 'Password must be at least 6 characters.';
+        return;
+    }
+    if (newPass !== confirmPass) {
+        if (errorEl) errorEl.textContent = 'Passwords do not match.';
+        return;
+    }
+
+    const target = STATE.users.find(x => x.id === u.id);
+    if (target) {
+        target.password = newPass;
+        target.mustChangePassword = false;
+    }
+    u.mustChangePassword = false; // keep in-memory session user in sync
+
+    await persistUsers();
+    STATE.page = 'dashboard';
+    showToast('Password updated successfully.');
+    render();
+}
+
 let clockInterval = null;
 function tickClock() {
     if (clockInterval) clearInterval(clockInterval);
@@ -482,24 +811,739 @@ document.addEventListener('click', (e) => {
 
 /* System Bootstrapper Init Engine */
 async function init() {
-    let [stores, users, taskTemplates, attendance, taskInstances, leaves] = await Promise.all([
-        loadKey('stores', true), loadKey('users', true), loadKey('task_templates', true),
-        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true)
+    let [stores, users, taskTemplates, attendance, taskInstances, leaves, dutyRosters] = await Promise.all([
+        loadKey('stores', true), loadUsersSafe(), loadKey('task_templates', true),
+        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true),
+        loadKey('duty_rosters', true)
     ]);
     if (!stores || !users) {
         const seed = seedData();
         stores = seed.stores; users = seed.users; taskTemplates = seed.taskTemplates;
-        attendance = []; taskInstances = []; leaves = [];
-        await Promise.all([saveKey('stores', stores, true), saveKey('users', users, true), saveKey('task_templates', taskTemplates, true), saveKey('attendance', attendance, true), saveKey('task_instances', taskInstances, true), saveKey('leaves', leaves, true)]);
+        attendance = []; taskInstances = []; leaves = []; dutyRosters = [];
+        await Promise.all([saveKey('stores', stores, true), saveKey('users', users, true), saveKey('task_templates', taskTemplates, true), saveKey('attendance', attendance, true), saveKey('task_instances', taskInstances, true), saveKey('leaves', leaves, true), saveKey('duty_rosters', dutyRosters, true)]);
     }
     STATE.stores = stores || []; STATE.users = users || []; STATE.taskTemplates = taskTemplates || [];
     STATE.attendance = attendance || []; STATE.taskInstances = taskInstances || []; STATE.leaves = leaves || [];
-    // Materialize today's checklist from active templates so staff/managers actually see tasks to tick off.
+    STATE.dutyRosters = dutyRosters || []; // NEW
     ensureInstancesForDate(STATE.stores.map(s => s.id), todayStr());
     const sessionId = await loadKey('session', false);
     if (sessionId) { const u = STATE.users.find(x => x.id === sessionId); if (u) STATE.user = u; }
+    STATE.punchStatus = ''; STATE.punchOk = null;
     STATE.ready = true;
     render();
+}
+
+function collectStoreRosterEntries(form, storeId) {
+    const staff = activeStaffForStore(storeId);
+    const weekStart = form.dataset.weekStart;
+    const dates = weekDates(weekStart);
+
+    // Read chips currently in each lane
+    // day → userId → type
+    const placed = {};
+    DAY_KEYS.forEach(dk => { placed[dk] = {}; });
+
+    form.querySelectorAll('[data-roster-chips]').forEach(box => {
+        const type = box.dataset.type;
+        const dk = box.dataset.day;
+        box.querySelectorAll('.roster-chip[data-user]').forEach(chip => {
+            placed[dk][chip.dataset.user] = type;
+        });
+    });
+
+    // Force approved leave
+    staff.forEach(s => {
+        DAY_KEYS.forEach((dk, i) => {
+            if (approvedLeaveForDay(s.id, dates[i])) placed[dk][s.id] = 'leave';
+        });
+    });
+
+    const crossByDay = {};
+    DAY_KEYS.forEach(dk => {
+        const storeSel = form.querySelector(`.roster-cross-store-select[data-day="${dk}"]`);
+        const shiftSel = form.querySelector(`.roster-cross-shift-select[data-day="${dk}"]`);
+        crossByDay[dk] = {
+            storeId: storeSel ? storeSel.value : '',
+            shiftType: shiftSel ? shiftSel.value : ''
+        };
+    });
+
+    return staff.map(s => {
+        const days = {}, cross = {};
+        DAY_KEYS.forEach(dk => {
+            days[dk] = placed[dk][s.id] || '';
+            if (days[dk] === 'cross_store') cross[dk] = { ...crossByDay[dk] };
+        });
+        return { userId: s.id, days, cross };
+    });
+}
+
+function saveStoreRoster(form, { asDraft }) {
+    const storeId = form.dataset.store, weekStart = form.dataset.weekStart, existingId = form.dataset.rosterId;
+    const entries = collectStoreRosterEntries(form, storeId);
+    if (!entries) return false; // conflict toast already shown
+
+    if (!asDraft) {
+        const incomplete = entries.some(en => DAY_KEYS.some(dk =>
+            !en.days[dk] || (en.days[dk] === 'cross_store' && (!en.cross[dk]?.storeId || !en.cross[dk]?.shiftType))
+        ));
+        if (incomplete) {
+            showToast('Assign every staff member to exactly one duty each day. Cross-store needs store + shift.');
+            return false;
+        }
+    }
+
+    const now = new Date().toISOString();
+    if (existingId) {
+        const rec = STATE.dutyRosters.find(r => r.id === existingId);
+        rec.entries = entries;
+        if (asDraft) {
+            rec.status = 'draft';
+        } else {
+            rec.status = 'pending_approval';
+            rec.submittedBy = STATE.user.id; rec.submittedAt = now;
+            rec.editedBy = null; rec.editedAt = null; rec.decidedBy = null; rec.decidedAt = null;
+        }
+    } else {
+        STATE.dutyRosters.push({
+            id: uid(), type: 'store', storeId, weekStart, entries,
+            status: asDraft ? 'draft' : 'pending_approval',
+            createdBy: STATE.user.id, createdByRole: STATE.user.role, // NEW: track who actually started this roster
+            submittedBy: asDraft ? null : STATE.user.id, submittedAt: asDraft ? null : now,
+            editedBy: null, editedAt: null, decidedBy: null, decidedAt: null, rejectionReason: null
+        });
+    }
+    return true;
+}
+
+function bindRosterExclusiveUI() {
+    document.querySelectorAll('.roster-form').forEach(form => {
+        if (form.dataset.rosterBound === '1') return; // don't double-bind
+        form.dataset.rosterBound = '1';
+
+        const bootEl = form.querySelector('.roster-bootstrap');
+        if (!bootEl) return;
+
+        let boot;
+        try {
+            // textarea → .value (not textContent)
+            boot = JSON.parse(bootEl.value || bootEl.textContent || '');
+        } catch (err) {
+            console.error('roster bootstrap parse failed', err);
+            return;
+        }
+        if (!boot?.staff) return;
+
+        const staffById = Object.fromEntries(boot.staff.map(s => [s.id, s]));
+
+        const closePop = () => {
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
+        };
+
+        const escName = (name) => String(name ?? '').replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+        );
+
+        const chipsHtml = (userId, locked) => {
+            const name = staffById[userId]?.name || userId;
+            return `<span class="roster-chip${locked ? ' locked' : ''}" data-user="${userId}">
+              <span class="chip-name">${escName(name)}</span>
+              ${locked ? '' : `<button type="button" class="chip-x" data-roster-chip-remove="${userId}" aria-label="Remove">×</button>`}
+            </span>`;
+        };
+
+        const refreshUnassigned = (dk) => {
+            const taken = new Set();
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`)
+                .forEach(c => taken.add(c.dataset.user));
+            const box = form.querySelector(`[data-roster-unassigned][data-day="${dk}"]`);
+            if (!box) return;
+            const free = boot.staff.filter(s => !taken.has(s.id));
+            box.innerHTML = free.length
+                ? free.map(s =>
+                    `<span class="roster-chip" data-user="${s.id}"><span class="chip-name">${escName(s.name)}</span></span>`
+                ).join('')
+                : '<span class="text-faint" style="font-size:11px;">All assigned</span>';
+        };
+
+        const removeUserFromDay = (userId, dk) => {
+            form.querySelectorAll(
+                `[data-roster-chips][data-day="${dk}"] .roster-chip[data-user="${userId}"]`
+            ).forEach(ch => ch.remove());
+        };
+
+        const addUserToLane = (userId, type, dk) => {
+            removeUserFromDay(userId, dk); // exclusive: one duty per day
+            const box = form.querySelector(
+                `[data-roster-chips][data-type="${type}"][data-day="${dk}"]`
+            );
+            if (!box) return;
+            if (box.querySelector(`.roster-chip[data-user="${userId}"]`)) return;
+            box.insertAdjacentHTML('beforeend', chipsHtml(userId, type === 'leave'));
+            refreshUnassigned(dk);
+        };
+
+        form.addEventListener('click', (e) => {
+            const rm = e.target.closest('[data-roster-chip-remove]');
+            if (rm) {
+                e.preventDefault();
+                e.stopPropagation();
+                const chip = rm.closest('.roster-chip');
+                const lane = rm.closest('[data-roster-chips]');
+                if (chip && lane) {
+                    const dk = lane.dataset.day;
+                    chip.remove();
+                    refreshUnassigned(dk);
+                }
+                closePop();
+                return;
+            }
+
+            const addBtn = e.target.closest('[data-roster-add]');
+            if (!addBtn || !form.contains(addBtn)) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            closePop();
+
+            const type = addBtn.dataset.type;
+            const dk = addBtn.dataset.day;
+            const taken = new Set();
+            form.querySelectorAll(`[data-roster-chips][data-day="${dk}"] .roster-chip[data-user]`)
+                .forEach(c => taken.add(c.dataset.user));
+            const available = boot.staff.filter(s => !taken.has(s.id));
+
+            const pop = document.createElement('div');
+            pop.className = 'roster-pop';
+            pop.innerHTML =
+                `<div class="roster-pop-title">Available · ${String(dk).toUpperCase()}</div>` +
+                (available.length
+                    ? available.map(s =>
+                        `<button type="button" class="roster-pop-item" data-pick="${s.id}">${escName(s.name)}</button>`
+                    ).join('')
+                    : `<div class="roster-pop-empty">Everyone is already assigned this day</div>`);
+
+            const rect = addBtn.getBoundingClientRect();
+            pop.style.position = 'fixed';
+            pop.style.left = Math.min(rect.left, window.innerWidth - 240) + 'px';
+            pop.style.top = Math.min(rect.bottom + 6, window.innerHeight - 280) + 'px';
+            document.body.appendChild(pop);
+
+            pop.addEventListener('click', (ev) => {
+                const item = ev.target.closest('[data-pick]');
+                if (!item) return;
+                addUserToLane(item.dataset.pick, type, dk);
+                closePop();
+            });
+        });
+
+        DAY_KEYS.forEach(dk => refreshUnassigned(dk));
+    });
+}
+
+// Call once at module load — NOT inside attachAppEvents on every render
+if (!window.__rosterPopCloserBound) {
+    window.__rosterPopCloserBound = true;
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.roster-pop') && !e.target.closest('[data-roster-add]')) {
+            document.querySelectorAll('.roster-pop').forEach(p => p.remove());
+        }
+    });
+}
+
+function findRosterExportCard(kind, id, week) {
+    return document.querySelector(
+        `.roster-export-card[data-export-kind="${kind}"][data-export-id="${id}"][data-export-week="${week}"]`
+    );
+}
+
+function rosterShareFileName(kind, id, week) {
+    const label = kind === 'am'
+        ? (userName(id) || 'am').replace(/\s+/g, '-')
+        : (storeName(id) || 'store').replace(/\s+/g, '-');
+    return `duty-roster-${label}-${week}.png`;
+}
+
+function rosterShareText(kind, id, week) {
+    const range = (() => {
+        try {
+            const dates = weekDates(week);
+            return `${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}`;
+        } catch {
+            return week;
+        }
+    })();
+    if (kind === 'am') {
+        return `Duty roster — ${userName(id)} visit plan (${range})`;
+    }
+    return `Duty roster — ${storeName(id)} (${range})`;
+}
+
+async function captureRosterCard(kind, id, week) {
+    const html = kind === 'am'
+        ? buildAmExportReport(id, week)
+        : buildStoreExportReport(id, week);
+
+    if (!html) {
+        showToast('No roster data found to export.');
+        return null;
+    }
+
+    return captureRosterExportHtml(html, { scale: 2 });
+}
+
+async function captureStoresBundle(week) {
+    const storeIds = STATE.user?.role === 'admin'
+        ? STATE.stores.map(store => store.id)
+        : storeIdsForUser(STATE.user);
+
+    const reports = storeIds
+        .map(storeId => buildStoreExportReport(storeId, week))
+        .filter(Boolean)
+        .join('');
+
+    if (!reports) {
+        showToast('No store rosters found to export.');
+        return null;
+    }
+
+    return captureRosterExportHtml(reports, { scale: 1.25 });
+}
+
+async function exportRosterImage(kind, id, week) {
+    const canvas = await captureRosterCard(kind, id, week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+    downloadBlob(blob, rosterShareFileName(kind, id, week));
+    showToast('Image downloaded.');
+}
+
+async function shareRosterWhatsApp(kind, id, week) {
+    const canvas = await captureRosterCard(kind, id, week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+
+    const filename = rosterShareFileName(kind, id, week);
+    const text = rosterShareText(kind, id, week);
+    const file = new File([blob], filename, { type: 'image/png' });
+
+    // Best path: native share sheet (mobile Chrome/Safari) → user picks WhatsApp
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: 'Duty roster', text });
+            showToast('Shared.');
+            return;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return; // user cancelled
+            console.warn('share failed, falling back', err);
+        }
+    }
+
+    // Fallback: download image + open WhatsApp with caption (user attaches image manually)
+    downloadBlob(blob, filename);
+    const waUrl = 'https://wa.me/?text=' + encodeURIComponent(text + '\n\n(Image downloaded — attach it in the chat.)');
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    showToast('Image downloaded. Attach it in WhatsApp.');
+}
+
+function bindRosterExportActions() {
+    document.querySelectorAll('[data-roster-export-img]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.rosterExportImg;
+            const id = btn.dataset.id;
+            const week = btn.dataset.week;
+            btn.disabled = true;
+            try { await exportRosterImage(kind, id, week); }
+            finally { btn.disabled = false; }
+        });
+    });
+    document.querySelectorAll('[data-roster-share-wa]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.rosterShareWa;
+            const id = btn.dataset.id;
+            const week = btn.dataset.week;
+            btn.disabled = true;
+            try { await shareRosterWhatsApp(kind, id, week); }
+            finally { btn.disabled = false; }
+        });
+    });
+}
+
+
+function getStoresBundle(week) {
+    return document.querySelector(`.roster-stores-bundle[data-week="${week}"]`)
+        || document.querySelector('.roster-stores-bundle');
+}
+
+function canvasToBlob(canvas) {
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+}
+
+function allStoresShareName(week) {
+    const who = STATE.user?.role === 'admin' ? 'all-stores' : 'my-stores';
+    return `duty-rosters-${who}-${week}.png`;
+}
+
+function allStoresShareText(week) {
+    let range = week;
+    try {
+        const dates = weekDates(week);
+        range = `${dates[0]} – ${dates[6]}`;
+    } catch { /* ignore */ }
+    const n = document.querySelectorAll('.roster-stores-bundle .card, .roster-stores-bundle .roster-export-card').length;
+    const name = STATE.user?.name || 'Area Manager';
+    return `Duty rosters (${n} store${n === 1 ? '' : 's'}) — ${name} — week ${range}`;
+}
+
+// Helper: returns array of store names whose roster is NOT approved for the week
+function unapprovedStoreNames(week) {
+    const u = STATE.user;
+    const storeIds = u.role === 'admin'
+        ? STATE.stores.map(s => s.id)
+        : storeIdsForUser(u);
+
+    const unapproved = storeIds.filter(sid => {
+        const roster = STATE.dutyRosters.find(r =>
+            r.type === 'store' && r.storeId === sid && r.weekStart === week && r.status === 'approved'
+        );
+        return !roster; // no approved roster = unapproved
+    });
+
+    return unapproved.map(sid => {
+        const s = STATE.stores.find(x => x.id === sid);
+        return s ? s.name : sid;
+    });
+}
+
+// Also check AM's own roster if user is AM
+function amRosterApproved(week) {
+    const u = STATE.user;
+    if (u.role !== 'area_manager') return true; // N/A for admin
+    const amRoster = STATE.dutyRosters.find(r =>
+        r.type === 'am' && r.userId === u.id && r.weekStart === week && r.status === 'approved'
+    );
+    return !!amRoster;
+}
+
+async function exportAllStoreRosters(week) {
+    const unapproved = unapprovedStoreNames(week);
+    if (unapproved.length > 0) {
+        showToast(`Please approve duty roster of: ${unapproved.join(', ')}`);
+        return;
+    }
+    if (!amRosterApproved(week)) {
+        showToast('Please approve the visit plan for the Area Manager before exporting.');
+        return;
+    }
+    const canvas = await captureStoresBundle(week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+    downloadBlob(blob, allStoresShareName(week));
+    showToast('Combined roster image downloaded.');
+}
+
+async function shareAllStoreRostersWhatsApp(week) {
+    const unapproved = unapprovedStoreNames(week);
+    if (unapproved.length > 0) {
+        showToast(`Please approve duty roster of: ${unapproved.join(', ')}`);
+        return;
+    }
+    if (!amRosterApproved(week)) {
+        showToast('Please approve the visit plan for the Area Manager before exporting.');
+        return;
+    }
+    const canvas = await captureStoresBundle(week);
+    if (!canvas) return;
+    const blob = await canvasToBlob(canvas);
+    if (!blob) { showToast('Could not build PNG.'); return; }
+    const filename = allStoresShareName(week);
+    const text = allStoresShareText(week);
+    const file = new File([blob], filename, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file], title: 'Duty rosters', text });
+            showToast('Shared.');
+            return;
+        } catch (err) {
+            if (err?.name === 'AbortError') return;
+            console.warn(err);
+        }
+    }
+    downloadBlob(blob, filename);
+    window.open(
+        'https://wa.me/?text=' + encodeURIComponent(text + '\n\n(Image downloaded — attach it in the chat.)'),
+        '_blank', 'noopener,noreferrer'
+    );
+    showToast('Image downloaded. Attach it in WhatsApp.');
+}
+
+function bindRosterBulkExport() {
+    document.querySelectorAll('[data-roster-export-all]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await exportAllStoreRosters(btn.dataset.week); }
+            finally { btn.disabled = false; }
+        });
+    });
+    document.querySelectorAll('[data-roster-share-all-wa]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try { await shareAllStoreRostersWhatsApp(btn.dataset.week); }
+            finally { btn.disabled = false; }
+        });
+    });
+}
+
+function exportEsc(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+}
+
+function exportWeekLabel(weekStart) {
+    const dates = weekDates(weekStart);
+    return `${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}`;
+}
+
+function exportDateLabel(date) {
+    const dt = new Date(`${date}T00:00:00`);
+
+    return dt.toLocaleDateString([], {
+        day: '2-digit',
+        month: 'short'
+    });
+}
+
+function exportDutyLabel(type) {
+    const labels = {
+        shift1: 'SHIFT 1',
+        shift2: 'SHIFT 2',
+        half_day: 'HALF DAY',
+        weekly_off: 'WEEKLY OFF',
+        leave: 'LEAVE',
+        cross_store: 'CROSS-STORE VISIT'
+    };
+    return labels[type] || String(type || '').replace(/_/g, ' ').toUpperCase();
+}
+
+function exportDutyClass(type) {
+    return {
+        shift1: 'export-duty-shift1',
+        shift2: 'export-duty-shift2',
+        half_day: 'export-duty-halfday',
+        weekly_off: 'export-duty-weekoff',
+        leave: 'export-duty-leave',
+        cross_store: 'export-duty-cross'
+    }[type] || '';
+}
+
+function exportTypeOrder() {
+    return ['shift1', 'shift2', 'half_day', 'weekly_off', 'leave', 'cross_store'];
+}
+
+/**
+ * Returns the names/details assigned to a duty type for one day.
+ * This reads roster data directly rather than depending on rendered UI.
+ */
+function exportStoreCell(roster, type, dayKey) {
+    const assigned = (roster.entries || [])
+        .filter(entry => entry.days?.[dayKey] === type)
+        .map(entry => {
+            const staff = STATE.users.find(user => user.id === entry.userId);
+            if (!staff) return null;
+
+            if (type === 'cross_store') {
+                const cross = entry.cross?.[dayKey];
+                const targetStore = cross?.storeId ? storeName(cross.storeId) : 'Store not selected';
+                const targetShift = exportDutyLabel(cross?.shiftType || '');
+                return `${staff.name} · ${targetStore}${targetShift ? ` / ${targetShift}` : ''}`;
+            }
+
+            return staff.name;
+        })
+        .filter(Boolean);
+
+    return assigned.length
+        ? assigned.map(name => `<span class="export-staff-chip">${exportEsc(name)}</span>`).join('')
+        : '<span class="export-empty">—</span>';
+}
+
+function hasExportAssignments(roster, type) {
+    return DAY_KEYS.some(dayKey =>
+        (roster.entries || []).some(entry => entry.days?.[dayKey] === type)
+    );
+}
+
+function buildStoreExportReport(storeId, weekStart) {
+    const store = STATE.stores.find(item => item.id === storeId);
+    const roster = STATE.dutyRosters.find(item =>
+        item.type === 'store' &&
+        item.storeId === storeId &&
+        item.weekStart === weekStart
+    );
+
+    if (!store || !roster) return '';
+
+    const dates = weekDates(weekStart);
+
+    // Do not show completely unused shift/duty types for this store.
+    const activeTypes = exportTypeOrder().filter(type =>
+        hasExportAssignments(roster, type)
+    );
+
+    const head = dates.map((date, index) => `
+        <th>
+            <span class="export-day">${exportEsc(DAY_KEYS[index].toUpperCase())}</span>
+            <span class="export-date">${exportEsc(fmtDateShort(date))}</span>
+        </th>
+    `).join('');
+
+    const body = activeTypes.map(type => `
+        <tr class="${exportDutyClass(type)}">
+            <th scope="row">${exportDutyLabel(type)}</th>
+            ${DAY_KEYS.map(dayKey => `
+                <td>${exportStoreCell(roster, type, dayKey)}</td>
+            `).join('')}
+        </tr>
+    `).join('');
+
+    const submittedBy = roster.submittedBy ? userName(roster.submittedBy) : '';
+    const approvedBy = roster.decidedBy ? userName(roster.decidedBy) : '';
+
+    return `
+        <section class="duty-export-report">
+            <header class="duty-export-header">
+                <div>
+                    <div class="duty-export-store">${exportEsc(store.name)}</div>
+                    <div class="duty-export-subtitle">Weekly Duty Roster</div>
+                </div>
+                <div class="duty-export-week">${exportEsc(exportWeekLabel(weekStart))}</div>
+            </header>
+
+            <table class="duty-export-table">
+                <thead>
+                    <tr>
+                        <th class="export-duty-heading">DUTY TYPE</th>
+                        ${head}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${body || `
+                        <tr>
+                            <td colspan="8" class="export-no-records">
+                                No duty assignments available for this week.
+                            </td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+
+            <footer class="duty-export-footer">
+                ${submittedBy ? `Submitted by ${exportEsc(submittedBy)}` : ''}
+                ${submittedBy && approvedBy ? ' · ' : ''}
+                ${approvedBy ? `Approved by ${exportEsc(approvedBy)}` : ''}
+            </footer>
+        </section>
+    `;
+}
+
+function buildAmExportReport(amUserId, weekStart) {
+    const am = STATE.users.find(user => user.id === amUserId);
+    const roster = STATE.dutyRosters.find(item =>
+        item.type === 'am' &&
+        item.userId === amUserId &&
+        item.weekStart === weekStart
+    );
+
+    if (!am || !roster) return '';
+
+    const dates = weekDates(weekStart);
+
+    const cells = DAY_KEYS.map((dayKey, index) => {
+        const day = roster.days?.[dayKey] || {};
+        const type = day.type || '';
+        const store = day.storeId ? storeName(day.storeId) : '';
+
+        const value = type === 'weekly_off' || type === 'leave'
+            ? exportDutyLabel(type)
+            : `${exportDutyLabel(type)}${store ? ` · ${store}` : ''}`;
+
+        return `
+            <td>
+                <div class="export-am-day">${exportEsc(DAY_KEYS[index].toUpperCase())}</div>
+                <div class="export-am-date">${exportEsc(exportDateLabel(dates[index]))}</div>
+                <span class="export-staff-chip">${exportEsc(value || '—')}</span>
+            </td>
+        `;
+    }).join('');
+
+    return `
+        <section class="duty-export-report">
+            <header class="duty-export-header">
+                <div>
+                    <div class="duty-export-store">${exportEsc(am.name)}</div>
+                    <div class="duty-export-subtitle">Area Manager Visit Plan</div>
+                </div>
+                <div class="duty-export-week">${exportEsc(exportWeekLabel(weekStart))}</div>
+            </header>
+
+            <table class="duty-export-table duty-export-am-table">
+                <thead>
+                    <tr>${DAY_KEYS.map(dayKey => `<th>${exportEsc(dayKey.toUpperCase())}</th>`).join('')}</tr>
+                </thead>
+                <tbody><tr>${cells}</tr></tbody>
+            </table>
+        </section>
+    `;
+}
+
+async function captureRosterExportHtml(html, { scale = 1.5 } = {}) {
+    if (typeof html2canvas !== 'function') {
+        showToast('Image export library failed to load.');
+        return null;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'duty-export-host';
+    host.innerHTML = html;
+
+    document.body.appendChild(host);
+
+    try {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+
+        const width = Math.ceil(host.scrollWidth);
+        const height = Math.ceil(host.scrollHeight);
+
+        return await html2canvas(host, {
+            backgroundColor: '#ffffff',
+            scale,
+            useCORS: true,
+            logging: false,
+            width,
+            height,
+            windowWidth: width,
+            windowHeight: height,
+            scrollX: 0,
+            scrollY: 0
+        });
+    } finally {
+        host.remove();
+    }
 }
 
 init();

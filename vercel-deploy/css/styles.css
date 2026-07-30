@@ -604,3 +604,493 @@ tr:last-child td{border-bottom:none;}
     line-height: 1.2;      /* keeps text aligned with checkbox */
     color: var(--text);
 }
+
+.row-am-present { background: rgba(215,25,32,0.06); }
+.am-badge { margin-left:6px; font-size:13px; }
+
+.static-value {
+    padding: 8px 12px;
+    background: var(--canvas);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* ===== Duty roster redesign ===== */
+.roster-form .roster-hint {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-soft);
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--canvas);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+}
+.roster-form .roster-hint b { color: var(--text); font-weight: 600; }
+
+.roster-grid-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--line); }
+.roster-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 820px;
+    background: #fff;
+}
+.roster-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f7f8fa;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: center;
+}
+.roster-grid thead th:first-child {
+    text-align: left;
+    min-width: 130px;
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: #f7f8fa;
+}
+.roster-grid tbody th {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #fff;
+    text-align: left;
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    min-width: 130px;
+    vertical-align: top;
+}
+.roster-grid tbody td {
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    vertical-align: top;
+    min-width: 128px;
+    background: #fbfbfc;
+}
+.roster-grid tbody tr:last-child th,
+.roster-grid tbody tr:last-child td { border-bottom: none; }
+
+.roster-type-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.roster-type-label .rt-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.roster-type-label .rt-count {
+    font-size: 10px;
+    color: var(--text-soft);
+    font-weight: 500;
+}
+.roster-type-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px; vertical-align: middle;
+}
+
+.roster-lane {
+    min-height: 72px;
+    border-radius: 10px;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid var(--line);
+    box-shadow: 0 1px 0 rgba(16,24,40,.03);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.roster-lane[data-type="shift1"] { border-top: 3px solid #2563eb; }
+.roster-lane[data-type="shift2"] { border-top: 3px solid #7c3aed; }
+.roster-lane[data-type="half_day"] { border-top: 3px solid #d97706; }
+.roster-lane[data-type="weekly_off"] { border-top: 3px solid #64748b; }
+.roster-lane[data-type="leave"] { border-top: 3px solid #dc2626; background: #fff7f7; }
+.roster-lane[data-type="cross_store"] { border-top: 3px solid #0d9488; }
+.roster-lane[data-type="unassigned"] {
+    border-top: 3px dashed #cbd5e1;
+    background: #f8fafc;
+    min-height: 48px;
+}
+
+.roster-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 28px;
+}
+.roster-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 4px 8px 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    background: #eef2ff;
+    color: #1e3a8a;
+    border: 1px solid #c7d2fe;
+    cursor: default;
+    user-select: none;
+}
+.roster-lane[data-type="shift2"] .roster-chip { background:#f3e8ff; color:#5b21b6; border-color:#e9d5ff; }
+.roster-lane[data-type="half_day"] .roster-chip { background:#fff7ed; color:#9a3412; border-color:#fed7aa; }
+.roster-lane[data-type="weekly_off"] .roster-chip { background:#f1f5f9; color:#334155; border-color:#cbd5e1; }
+.roster-lane[data-type="leave"] .roster-chip { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+.roster-lane[data-type="cross_store"] .roster-chip { background:#ccfbf1; color:#115e59; border-color:#99f6e4; }
+.roster-lane[data-type="unassigned"] .roster-chip {
+    background: #fff; color: var(--text-soft); border-style: dashed; font-weight: 500;
+}
+.roster-chip.locked { padding-right: 10px; opacity: .95; }
+.roster-chip .chip-x {
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: .55;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 0 0 2px;
+    border-radius: 50%;
+}
+.roster-chip .chip-x:hover { opacity: 1; }
+
+.roster-add-btn {
+    align-self: flex-start;
+    border: 1px dashed var(--line);
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.roster-add-btn:hover { border-color: #94a3b8; color: var(--text); background: #f8fafc; }
+.roster-add-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.roster-cross-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+}
+.roster-cross-fields select {
+    width: 100%;
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
+
+/* Add-staff popover */
+.roster-pop {
+    position: absolute;
+    z-index: 50;
+    width: 220px;
+    max-height: 260px;
+    overflow: auto;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(15,23,42,.16);
+    padding: 8px;
+}
+.roster-pop-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+    padding: 4px 6px 8px;
+}
+.roster-pop-item {
+    display: flex;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+}
+.roster-pop-item:hover { background: #f1f5f9; }
+.roster-pop-empty {
+    font-size: 12px;
+    color: var(--text-soft);
+    padding: 10px 8px;
+    text-align: center;
+}
+
+/* Read-only table */
+.roster-ro-lane {
+    min-height: 40px;
+    padding: 6px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid var(--line);
+}
+.roster-ro-lane .roster-chip { cursor: default; }
+.am-day-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 120px;
+}
+.am-field-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+}
+.am-roster-grid select {
+    width: 100%;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
+.roster-export-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.roster-export-actions .btn {
+    white-space: nowrap;
+}
+/* Cleaner capture: hide export buttons inside the snapshot target if you ever nest them */
+.roster-export-target .roster-export-actions { display: none; }
+
+/* Optional: hide interactive chrome while capturing */
+body.roster-capturing .roster-export-actions,
+body.roster-capturing .modal-actions,
+body.roster-capturing .roster-add-btn,
+body.roster-capturing .chip-x {
+    visibility: hidden !important;
+}
+.roster-bulk-export {
+    border: 1px dashed var(--line);
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+}
+/* While capturing the bundle, hide per-card export buttons & edit chrome */
+body.roster-capturing .roster-export-actions,
+body.roster-capturing .roster-bulk-export,
+body.roster-capturing .modal-actions,
+body.roster-capturing .roster-add-btn,
+body.roster-capturing .chip-x {
+    visibility: hidden !important;
+}
+
+/* Slightly tighter cards in the snapshot */
+body.roster-capturing .roster-stores-bundle .card {
+    break-inside: avoid;
+    box-shadow: none;
+}
+
+.duty-export-host {
+    position: fixed;
+    left: -20000px;
+    top: 0;
+
+    /* Host grows only as much as the roster requires */
+    width: max-content;
+    min-width: 0;
+
+    padding: 22px;
+    box-sizing: border-box;
+    background: #fff;
+    color: #152033;
+    font-family: Arial, Helvetica, sans-serif;
+    overflow: visible;
+}
+
+.duty-export-report {
+    width: max-content;
+    max-width: none;
+    margin: 0 0 30px;
+    padding: 0;
+    background: #fff;
+    break-inside: avoid;
+}
+
+.duty-export-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 30px;
+    min-width: 100%;
+    padding: 0 0 10px;
+    border-bottom: 2px solid #1d2939;
+}
+
+.duty-export-store {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.15;
+    color: #172033;
+}
+
+.duty-export-subtitle {
+    margin-top: 3px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.duty-export-week {
+    color: #475467;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/*
+ * AUTO FIT:
+ * No fixed width and no table-layout: fixed.
+ * Browser calculates each column based on the actual duty records.
+ */
+.duty-export-table {
+    width: auto;
+    min-width: 100%;
+    margin-top: 12px;
+    border-collapse: collapse;
+    table-layout: auto;
+    font-size: 12px;
+}
+
+.duty-export-table th,
+.duty-export-table td {
+    border: 1px solid #d0d5dd;
+    padding: 8px 10px;
+    vertical-align: middle;
+    box-sizing: border-box;
+}
+
+/* Duty label stays compact but never squashes its text */
+.duty-export-table thead .export-duty-heading,
+.duty-export-table tbody > tr > th {
+    width: 135px;
+    min-width: 135px;
+    white-space: nowrap;
+}
+
+/*
+ * Day columns fit their records:
+ * - enough width for a normal employee name
+ * - long cross-store text wraps instead of creating a huge column
+ */
+.duty-export-table td,
+.duty-export-table thead th:not(.export-duty-heading) {
+    min-width: 125px;
+    max-width: 190px;
+}
+
+.duty-export-table thead th {
+    background: #f2f4f7;
+    color: #344054;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.duty-export-table tbody > tr > th {
+    background: #f8fafc;
+    color: #344054;
+    font-size: 11px;
+    font-weight: 800;
+    text-align: left;
+}
+
+/*
+ * Critical: No fixed height.
+ * A single record keeps a compact row; multiple/long records expand naturally.
+ */
+.duty-export-table td {
+    height: auto;
+    min-height: 0;
+}
+
+.export-day,
+.export-date {
+    display: block;
+}
+
+.export-day {
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.export-date {
+    margin-top: 2px;
+    color: #667085;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+/* Plain readable record label instead of large pills */
+.export-staff-chip {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 2px 0;
+    padding: 3px 5px;
+    box-sizing: border-box;
+
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #172033;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+}
+
+.export-empty {
+    color: #98a2b3;
+    font-size: 13px;
+}
+
+.export-no-records {
+    padding: 16px !important;
+    color: #667085;
+    font-style: italic;
+    text-align: center;
+}
+
+.export-duty-shift1 > th { border-left: 5px solid #2563eb !important; }
+.export-duty-shift2 > th { border-left: 5px solid #7c3aed !important; }
+.export-duty-halfday > th { border-left: 5px solid #ea580c !important; }
+.export-duty-weekoff > th { border-left: 5px solid #64748b !important; }
+.export-duty-leave > th { border-left: 5px solid #dc2626 !important; }
+.export-duty-cross > th { border-left: 5px solid #0d9488 !important; }
+
+.duty-export-footer {
+    padding-top: 8px;
+    color: #667085;
+    font-size: 10px;
+}

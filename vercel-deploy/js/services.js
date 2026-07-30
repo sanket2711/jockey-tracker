@@ -1,4 +1,5 @@
 import { STATE, BACKEND_API_URL, API_KEY } from './config.js';
+import {DAY_KEYS, distanceMeters} from './helpers.js';
 
 export async function saveKey(key, value, shared) {
     try {
@@ -38,6 +39,34 @@ export async function loadKey(key, shared) {
         return await response.json();
     } catch (e) {
         console.error('Load failed', key, e);
+        return null;
+    }
+}
+
+export async function loadUsersSafe() {
+    try {
+        const response = await fetch(`${BACKEND_API_URL}/api/users`, {
+            headers: { 'x-api-key': API_KEY }
+        });
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.error('Load users failed', e);
+        return null;
+    }
+}
+
+export async function loginRequest(email, password) {
+    try {
+        const response = await fetch(`${BACKEND_API_URL}/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+            body: JSON.stringify({ email, password })
+        });
+        if (!response.ok) return null;
+        return await response.json(); // safe user, no password
+    } catch (e) {
+        console.error('Login failed', e);
         return null;
     }
 }
@@ -134,5 +163,75 @@ export function employeesForUser(u) {
     return [];
 }
 
+// New: unified "team" helper used by Dashboard, Attendance, Team, Reports
+export function teamForUser(u) {
+    if (!u) return [];
+    const ids = storeIdsForUser(u);
+    if (u.role === 'admin') return STATE.users.filter(x => x.role !== 'admin');
+    if (u.role === 'area_manager') {
+        return STATE.users.filter(x =>
+            x.role !== 'admin' &&
+            (ids.includes(x.storeId) || x.id === u.id)
+        );
+    }
+    if (u.role === 'store_manager') {
+        return STATE.users.filter(x => x.storeId === u.storeId && x.role === 'sales_staff');
+    }
+    return [];
+}
+
+// New: find which store (if any) an area manager punched into today
+export function todayStoreIdFor(userId, attendance, dateStr) {
+    const rec = attendance.find(a => a.userId === userId && a.date === dateStr);
+    return rec ? rec.storeId : null;
+}
+
 export function storeName(id) { const s = STATE.stores.find(x => x.id === id); return s ? s.name : '—'; }
 export function userName(id) { const u = STATE.users.find(x => x.id === id); return u ? u.name : 'Unknown'; }
+
+export function nearestStore(lat, lng) {
+    let nearest = null, nearestDist = Infinity;
+    STATE.stores.forEach(s => {
+        const d = distanceMeters(lat, lng, s.lat, s.lng);
+        if (d < nearestDist) { nearestDist = d; nearest = s; }
+    });
+    return nearest ? { store: nearest, distance: nearestDist } : null;
+}
+
+export function authorizedStoreIdsFor(u) {
+    if (u.role === 'area_manager') return u.storeIds || [];
+    if (u.storeId) return [u.storeId];
+    return [];
+}
+
+export function isApproverForRecord(approverIds, rec) {
+    return approverIds.includes(rec.storeId) || (rec.homeStoreId && approverIds.includes(rec.homeStoreId));
+}
+
+export const persistDutyRosters = () => saveKey('duty_rosters', STATE.dutyRosters, true);
+
+export function activeStaffForStore(storeId) {
+    return STATE.users.filter(u => u.active !== false && u.storeId === storeId);
+}
+
+export function approvedLeaveForDay(userId, dateStr) {
+    return STATE.leaves.find(l => l.userId === userId && l.status === 'approved' && dateStr >= l.fromDate && dateStr <= l.toDate);
+}
+
+export function rosterFor(storeId, weekStart) {
+    return STATE.dutyRosters.find(r => r.type === 'store' && r.storeId === storeId && r.weekStart === weekStart);
+}
+
+export function amRosterFor(userId, weekStart) {
+    return STATE.dutyRosters.find(r => r.type === 'am' && r.userId === userId && r.weekStart === weekStart);
+}
+
+export function amVisitsForStore(storeId, weekStart) { // NEW
+    return STATE.dutyRosters
+        .filter(r => r.type === 'am' && r.weekStart === weekStart && r.status !== 'draft')
+        .map(r => {
+            const visitDays = DAY_KEYS.filter(dk => r.days[dk] && r.days[dk].storeId === storeId);
+            return visitDays.length ? { amId: r.userId, days: visitDays, entries: r.days } : null;
+        })
+        .filter(Boolean);
+}

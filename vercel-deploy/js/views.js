@@ -1,12 +1,21 @@
 import {STATE} from './config.js';
-import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel} from './helpers.js';
-import {storeName, userName, storesForUser, storeIdsForUser, employeesForUser} from './services.js';
+import {esc, fmtTime, fmtDate, fmtDateShort, roleLabel, mondayOf, weekDates, shiftWeek, DAY_KEYS, DAY_LABELS} from './helpers.js';
 import {
-    todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected
+    storeName,
+    userName,
+    storesForUser,
+    storeIdsForUser,
+    employeesForUser,
+    teamForUser,
+    isApproverForRecord, activeStaffForStore, approvedLeaveForDay, rosterFor, amRosterFor, amVisitsForStore,
+    persistDutyRosters
+} from './services.js';
+import {
+    todayStr, RADIUS_M, todayRecordFor, monthlyReport, isPunchPending, isPunchCountable, isPunchRejected, render, showToast
 } from './app.js';
 
 export function renderLogin() {
-    const demo = [['Admin / Owner', 'sanketbaheti1@gmail.com', 'admin123'], ['Area Manager', 'dinesh.area@sge.demo', 'area123'], ['Store Manager', 'sundar.manager@sge.demo', 'manager123'], ['Sales Staff', 'adarsh@sge.demo', 'staff123'],];
+    const demo = [['Admin / Owner', 'sanketbaheti1@gmail.com', 'admin123'], ['Area Manager', 'dinesh.area@sge.demo', 'area123'], ['Store Manager', 'sundar.manager@sge.demo', 'manager123'], ['Sales Staff', 'staff1@sge.demo', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
@@ -30,24 +39,16 @@ export function renderLogin() {
 }
 
 export function navItemsFor(role) {
-    const base = [['dashboard', 'Dashboard'], ['attendance', 'Attendance'], ['tasks', 'Tasks'], ['leave', 'Leave']];
-    if (role !== 'sales_staff') base.push(['reports', 'Reports']);
-    if (role === 'admin') {
-        base.push(['team', 'Team']);
-        base.push(['stores', 'Stores']);
-    }
+    const base = [['dashboard','Dashboard'],['attendance','Attendance'],['tasks','Tasks'],['leave','Leave'],['roster','Duty Roster']];
+    if (role !== 'sales_staff') base.push(['reports','Reports']);
+    if (role === 'admin') { base.push(['team','Team']); base.push(['stores','Stores']); }
     return base;
 }
 
 export function pageTitle(p) {
     return {
-        dashboard: 'Dashboard',
-        attendance: 'Attendance',
-        tasks: 'Daily Tasks',
-        leave: 'Leave',
-        reports: 'Reports',
-        team: 'Team',
-        stores: 'Stores'
+        dashboard: 'Dashboard', attendance: 'Attendance', tasks: 'Daily Tasks',
+        leave: 'Leave', roster: 'Duty Roster', reports: 'Reports', team: 'Team', stores: 'Stores'
     }[p] || '';
 }
 
@@ -60,51 +61,51 @@ export function pageSubtitle(u) {
 export function renderPunchWidget() {
     const u = STATE.user;
     const rec = todayRecordFor(u.id);
-    // Stores this user can punch against: single-store staff/managers use their assigned store;
-    // area managers choose from the stores they oversee. Anyone else (e.g. owner) gets no widget.
-    const punchStores = u.storeId ? STATE.stores.filter(s => s.id === u.storeId) : (u.role === 'area_manager' ? storesForUser(u) : []);
-    if (!punchStores.length) return '';
-    // Once punched (or pending), the store is locked to that record; otherwise honor the picker.
-    const savedId = STATE.punchStoreId && punchStores.some(s => s.id === STATE.punchStoreId) ? STATE.punchStoreId : null;
-    const activeStoreId = rec ? rec.storeId : (savedId || punchStores[0].id);
-    const store = STATE.stores.find(s => s.id === activeStoreId);
-    // Show the picker for store-less users (area managers) until they've punched for the day.
-    const showPicker = !rec && !u.storeId;
-    const storeLine = showPicker ? `<select class="punch-store-select" id="punchStore">${punchStores.map(s => `<option value="${s.id}" ${s.id === activeStoreId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
-       <div class="punch-store">within ${RADIUS_M}m of the selected store</div>` : `<div class="punch-store">${store ? esc(store.name) + ' · within ' + RADIUS_M + 'm required' : 'No store assigned'}</div>`;
+    const activeRec = (rec && !isPunchRejected(rec)) ? rec : null;
+    const isEligible = !!u.storeId || u.role === 'area_manager';
+    if (!isEligible) return '';
+
+    // Store is never picked manually — detected via GPS at punch time.
+    const punchedStore = rec ? STATE.stores.find(s => s.id === rec.storeId) : null;
+    const homeStore = u.storeId ? STATE.stores.find(s => s.id === u.storeId) : null;
+
+    const storeLine = punchedStore
+        ? `<div class="punch-store">${esc(punchedStore.name)}${rec.autoRouted ? ' <span class="pill pill-pending">Cross-store</span>' : ''}</div>`
+        : `<div class="punch-store">Store detected automatically on punch-in <span class="text-faint">(within ${RADIUS_M}m)</span></div>`;
+
     const now = new Date();
     let shiftSelectorHtml = '';
-    if (!rec && store) {
-        const s1 = `${store.shift1Start || '—'} – ${store.shift1End || '—'}`;
-        const s2 = `${store.shift2Start || '—'} – ${store.shift2End || '—'}`;
+    if (!activeRec) {
+        // Show shift timings from the home store if known; otherwise generic labels
+        // (area managers don't have a fixed store, so exact times are unknown pre-punch).
+        const s1 = homeStore ? `${homeStore.shift1Start || '—'} – ${homeStore.shift1End || '—'}` : null;
+        const s2 = homeStore ? `${homeStore.shift2Start || '—'} – ${homeStore.shift2End || '—'}` : null;
         shiftSelectorHtml = `
        <div class="punch-shift-row">
-       <div class="punch-shift-label">Shift</div>
+<!--       <div class="punch-shift-label">Shift</div>-->
         <div class="punch-shift-radio-group" role="radiogroup" aria-label="Select shift">
                       <label class="punch-shift-radio">
                         <input type="radio" name="punchShift" value="1" ${STATE.punchShift === 1 ? 'checked' : ''}>
-                        <span>Shift 1 <small>(${s1})</small></span>
+                        <span>Shift 1${s1 ? ` <small>(${s1})</small>` : ''}</span>
                       </label>
                       <label class="punch-shift-radio">
                         <input type="radio" name="punchShift" value="2" ${STATE.punchShift === 2 ? 'checked' : ''}>
-                        <span>Shift 2 <small>(${s2})</small></span>
+                        <span>Shift 2${s2 ? ` <small>(${s2})</small>` : ''}</span>
                       </label>
                     </div>
       </div>`;
     }
+
     let btnHtml,
         statusColor = STATE.punchOk === false ? 'var(--alert)' : (STATE.punchOk ? 'var(--success)' : 'rgba(255,255,255,0.75)');
     const manualLink = `<button class="punch-link" id="manualPunchBtn">Missed punch-in? Request manual entry</button>`;
     if (isPunchPending(rec)) {
-        // Manual punch-in submitted and awaiting a manager's decision.
         btnHtml = `<button class="punch-btn" disabled>Awaiting Approval</button>`;
     } else if (!isPunchCountable(rec)) {
-        // No valid check-in yet today (never punched, or previous manual request was rejected).
         btnHtml = `<button class="punch-btn" id="punchInBtn">Punch In</button>${manualLink}`;
     } else if (!rec.checkOutTime) {
         btnHtml = `<button class="punch-btn out" id="punchOutBtn">Punch Out</button>`;
     } else {
-        // Already checked out — punch-out stays available so the last one wins.
         btnHtml = `<button class="punch-btn out" id="punchOutBtn">Update Punch Out</button>`;
     }
 
@@ -115,9 +116,7 @@ export function renderPunchWidget() {
     return `
   <div class="punch-wrap">
     <div class="punch-card">
-      <div class="punch-time mono">${now.toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-    })}</div>
+      <div class="punch-time mono">${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
       <div class="punch-date">${fmtDate(todayStr())}</div>
       ${storeLine}
       ${shiftSelectorHtml}
@@ -126,7 +125,7 @@ export function renderPunchWidget() {
     </div>
     <div class="ticket">
       <h3>Today's Punch</h3>
-      ${!u.storeId ? `<div class="ticket-row"><span class="lbl">Store</span><span class="val">${store ? esc(store.name) : '—'}</span></div>` : ''}
+      <div class="ticket-row"><span class="lbl">Store</span><span class="val">${punchedStore ? esc(punchedStore.name) : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec && !isPunchRejected(rec) ? fmtTime(rec.checkInTime) + (rec.manual ? ' <span class="pill pill-pending">Manual</span>' : '') : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Status</span><span class="val">${statusVal}</span></div>
       <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${isPunchCountable(rec) && rec.checkOutTime ? fmtTime(rec.checkOutTime) + (outCount > 1 ? ` <span class="text-faint">(×${outCount})</span>` : '') : '—'}</span></div>
@@ -138,10 +137,13 @@ export function renderPunchWidget() {
 
 export function renderPunchApprovalTable(list) {
     const rows = list.slice().sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || '')).map(r => `
-    <tr><td><b>${esc(userName(r.userId))}</b><div class="badge-role">${esc(storeName(r.storeId))}</div></td>
+    <tr><td><b>${esc(userName(r.userId))}</b><div class="badge-role">
+        ${esc(storeName(r.storeId))}${r.homeStoreId && r.homeStoreId !== r.storeId ? ` <span class="text-faint">(home: ${esc(storeName(r.homeStoreId))})</span>` : ''}
+        ${r.autoRouted ? ' <span class="pill pill-pending">Cross-store</span>' : ''}
+      </div></td>
     <td>${fmtDateShort(r.date)}</td>
     <td>${fmtTime(r.checkInTime)} ${r.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">On time</span>'}</td>
-    <td>${esc(r.manualReason || '—')}</td>
+    <td>${esc(r.manualReason || (r.autoRouted ? 'Punched in outside assigned store' : '—'))}</td>
     <td><button class="btn btn-sm btn-primary" data-punch-approve="${r.id}">Approve</button> <button class="btn btn-sm btn-danger" data-punch-reject="${r.id}">Reject</button></td>
     </tr>`).join('');
     return `<div class="table-wrap"><table><thead><tr><th>Employee</th><th>Date</th><th>Claimed check-in</th><th>Reason</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -178,22 +180,23 @@ export function renderReportRows(rep) {
     return `<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-/* Page Routers Template Parsers */
 export function renderDashboard() {
     const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
     const canDecide = u.role !== 'sales_staff';
-    const scopedStaff = STATE.users.filter(x => ids.includes(x.storeId));
+
+    const scopedStaff = teamForUser(u);
     const scopedStaffIds = new Set(scopedStaff.map(s => s.id));
-    // Count only in-scope staff so an area manager's own punch doesn't skew the team percentage.
     const todaysAtt = STATE.attendance.filter(a => scopedStaffIds.has(a.userId) && a.date === today && isPunchCountable(a));
     const presentCount = todaysAtt.length;
     const lateCount = todaysAtt.filter(a => a.late).length;
     const attPct = scopedStaff.length ? Math.round(presentCount / scopedStaff.length * 100) : 0;
+
     const todaysTasks = STATE.taskInstances.filter(i => ids.includes(i.storeId) && i.date === today);
     const tasksDone = todaysTasks.filter(t => t.completed).length;
     const taskPct = todaysTasks.length ? Math.round(tasksDone / todaysTasks.length * 100) : 0;
+    // const pendingLeaves = canDecide ? STATE.leaves.filter(l => l.status === 'pending' && l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId))) : [];
+    const pendingPunches = canDecide ? STATE.attendance.filter(a => a.approvalStatus === 'pending' && a.userId !== u.id && (u.role === 'admin' || isApproverForRecord(ids, a))) : [];
     const pendingLeaves = canDecide ? STATE.leaves.filter(l => l.status === 'pending' && l.userId !== u.id && (u.role === 'admin' || ids.includes(l.storeId))) : [];
-    const pendingPunches = canDecide ? STATE.attendance.filter(a => ids.includes(a.storeId) && a.approvalStatus === 'pending' && a.userId !== u.id) : [];
 
     let personalPunch = '';
     const punchWidget = renderPunchWidget();
@@ -202,6 +205,7 @@ export function renderDashboard() {
         personalPunch = `<div class="section-title">Your Punch<span class="hint">Today · ${hint}</span></div>${punchWidget}`;
     }
 
+    // CHANGED: highlight store row + AM badge when an area manager is punched in there today
     const storeRows = storesForUser(u).map(s => {
         const staff = STATE.users.filter(x => x.storeId === s.id);
         const staffIds = new Set(staff.map(x => x.id));
@@ -209,7 +213,18 @@ export function renderDashboard() {
         const pct = staff.length ? Math.round(att.length / staff.length * 100) : 0;
         const tks = STATE.taskInstances.filter(t => t.storeId === s.id && t.date === today);
         const tdone = tks.filter(t => t.completed).length;
-        return `<tr><td><b>${esc(s.name)}</b></td><td>${staff.length}</td><td>${att.length}/${staff.length} <span class="text-faint">(${pct}%)</span></td>
+
+        const amRecord = STATE.attendance.find(a =>
+            a.storeId === s.id && a.date === today && isPunchCountable(a) &&
+            STATE.users.some(x => x.id === a.userId && x.role === 'area_manager')
+        );
+        const amUser = amRecord ? STATE.users.find(x => x.id === amRecord.userId) : null;
+        const rowAttr = amRecord ? ' class="row-am-present"' : '';
+        const amBadge = amRecord
+            ? `<span class="am-badge" title="Area Manager present: ${esc(amUser ? amUser.name : '')}">🧑‍💼</span>`
+            : '';
+
+        return `<tr${rowAttr}><td><b>${esc(s.name)}</b>${amBadge}</td><td>${staff.length}</td><td>${att.length}/${staff.length} <span class="text-faint">(${pct}%)</span></td>
       <td>${att.filter(a => a.late).length}</td><td>${tdone}/${tks.length}</td></tr>`;
     }).join('');
 
@@ -235,27 +250,102 @@ export function renderDashboard() {
 }
 
 export function renderAttendancePage() {
-    const u = STATE.user, ids = storeIdsForUser(u), today = todayStr();
+    const u = STATE.user, today = todayStr();
     let html = '';
     html += renderPunchWidget();
-    const staffScope = u.role === 'sales_staff' ? [u] : STATE.users.filter(x => ids.includes(x.storeId) && x.role !== 'admin' && x.role !== 'area_manager');
-    const rows = staffScope.map(s => {
+
+    if (u.role === 'sales_staff') {
+        const rec = STATE.attendance.find(a => a.userId === u.id && a.date === today);
+        const show = rec && !isPunchRejected(rec);
+        let pill = '<span class="pill pill-absent">Absent</span>';
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
+        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+        html += `
+      <div class="section-title">Your record today<span class="hint">${fmtDate(today)}</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Store</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+      <tbody><tr><td><b>${esc(u.name)}</b><div class="badge-role">${esc(roleLabel(u.role))}</div></td><td>${esc(storeName(u.storeId))}</td>
+      <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr></tbody></table></div>
+      `;
+        const rep = monthlyReport(u.id, STATE.month);
+        html += renderMonthPicker() + renderReportSummary(rep) + renderReportRows(rep);
+        return html;
+    }
+
+    // Managers/admin/area-manager view: filterable roster INCLUDING area managers
+    const allStores = storesForUser(u);
+    const team = teamForUser(u); // now includes area managers
+
+    if (!STATE.attendanceFilterStoreIds) STATE.attendanceFilterStoreIds = [];
+    if (!STATE.attendanceFilterStaffIds) STATE.attendanceFilterStaffIds = [];
+    const selStoreIds = STATE.attendanceFilterStoreIds;
+
+    const staffByStore = selStoreIds.length ? team.filter(x => {
+        if (x.role === 'area_manager') {
+            const rec = STATE.attendance.find(a => a.userId === x.id && a.date === today);
+            const amTodayStore = rec ? rec.storeId : null;
+            return (amTodayStore && selStoreIds.includes(amTodayStore)) ||
+                (x.storeIds || []).some(sid => selStoreIds.includes(sid));
+        }
+        return selStoreIds.includes(x.storeId);
+    }) : team;
+
+    const validStaffIds = new Set(staffByStore.map(x => x.id));
+    STATE.attendanceFilterStaffIds = STATE.attendanceFilterStaffIds.filter(id => validStaffIds.has(id));
+    const selStaffIds = STATE.attendanceFilterStaffIds;
+    const displayStaff = selStaffIds.length ? staffByStore.filter(x => selStaffIds.includes(x.id)) : staffByStore;
+
+    const rows = displayStaff.map(s => {
         const rec = STATE.attendance.find(a => a.userId === s.id && a.date === today);
         const show = rec && !isPunchRejected(rec);
         let pill = '<span class="pill pill-absent">Absent</span>';
-        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>'; else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
-        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${esc(storeName(s.storeId))}</td>
+        if (isPunchPending(rec)) pill = '<span class="pill pill-pending">Pending</span>';
+        else if (isPunchCountable(rec)) pill = rec.late ? '<span class="pill pill-late">Late</span>' : '<span class="pill pill-present">Present</span>';
+
+        const storeLabel = s.role === 'area_manager'
+            ? (rec ? `${esc(storeName(rec.storeId))} <span class="badge-role">AM</span>` : `${(s.storeIds || []).map(storeName).join(', ') || '—'} <span class="badge-role">AM</span>`)
+            : esc(storeName(s.storeId));
+
+        return `<tr><td><b>${esc(s.name)}</b><div class="badge-role">${esc(roleLabel(s.role))}</div></td><td>${storeLabel}</td>
       <td>${show ? fmtTime(rec.checkInTime) : '—'}</td><td>${show && isPunchCountable(rec) ? fmtTime(rec.checkOutTime) : '—'}</td><td>${pill}</td></tr>`;
     }).join('');
+
+    // Filter bar (same pattern as Reports)
+    let storeBtnLabel = "All Stores";
+    if (selStoreIds.length > 0) {
+        storeBtnLabel = selStoreIds.map(storeName).filter(Boolean).join(', ');
+        if (storeBtnLabel.length > 25) storeBtnLabel = `${selStoreIds.length} stores selected`;
+    }
+    const storeOptions = allStores.map(st => {
+        const checked = selStoreIds.includes(st.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="att-store-checkbox" value="${st.id}" ${checked}>${esc(st.name)}</label>`;
+    }).join('');
+
+    let staffBtnLabel = "All Staff";
+    if (selStaffIds.length > 0) {
+        staffBtnLabel = selStaffIds.map(id => { const s = staffByStore.find(x => x.id === id); return s ? s.name : ''; }).filter(Boolean).join(', ');
+        if (staffBtnLabel.length > 25) staffBtnLabel = `${selStaffIds.length} staff selected`;
+    }
+    const staffOptions = staffByStore.map(s => {
+        const checked = selStaffIds.includes(s.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="att-staff-checkbox" value="${s.id}" ${checked}>${esc(s.name)}</label>`;
+    }).join('');
+
     html += `
-  <div class="section-title">${u.role === 'sales_staff' ? 'Your record today' : "Today's Roster"}<span class="hint">${fmtDate(today)}</span></div>
+  <div class="filter-bar">
+      <div style="font-size:12px;color:var(--text-soft);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Filter:</div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'attStore' ? 'open' : ''}" id="attStoreDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="attStore">${esc(storeBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">${storeOptions || '<div class="empty-note">No stores available</div>'}</div>
+      </div>
+      <div class="multiselect-dropdown ${STATE.activeDropdown === 'attStaff' ? 'open' : ''}" id="attStaffDropdown">
+          <div class="multiselect-dropdown-btn" data-dropdown-toggle="attStaff">${esc(staffBtnLabel)}</div>
+          <div class="multiselect-dropdown-content">${staffOptions || '<div class="empty-note">No staff in scope</div>'}</div>
+      </div>
+  </div>
+  <div class="section-title">Today's Roster<span class="hint">${fmtDate(today)}</span></div>
   <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Store</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
   <tbody>${rows || '<tr><td colspan="5" class="empty-note">No one in scope.</td></tr>'}</tbody></table></div>
   `;
-    if (u.role === 'sales_staff') {
-        const rep = monthlyReport(u.id, STATE.month);
-        html += renderMonthPicker() + renderReportSummary(rep) + renderReportRows(rep);
-    }
     return html;
 }
 
@@ -360,7 +450,7 @@ export function renderLeavePage() {
 export function renderReportsPage() {
     const u = STATE.user;
     const allStores = storesForUser(u);
-    const staff = employeesForUser(u).filter(x => x.role === 'sales_staff' || x.role === 'store_manager');
+    const staff = teamForUser(u);
 
     // Safe initialization
     if (!STATE.reportFilterStoreIds) STATE.reportFilterStoreIds = [];
@@ -465,22 +555,65 @@ export function renderReportsPage() {
 }
 
 export function renderTeamPage() {
-    const rows = STATE.users
-        .filter(u => u.role !== 'admin')
-        .map(u => `
+    const u = STATE.user;
+    const allStores = storesForUser(u);
+    const team = teamForUser(u); // includes area managers already
+
+    if (!STATE.teamFilterStoreIds) STATE.teamFilterStoreIds = [];
+    if (!STATE.teamFilterStaffIds) STATE.teamFilterStaffIds = [];
+    const selStoreIds = STATE.teamFilterStoreIds;
+
+    const byStore = selStoreIds.length ? team.filter(x => x.role === 'area_manager'
+        ? (x.storeIds || []).some(sid => selStoreIds.includes(sid))
+        : selStoreIds.includes(x.storeId)) : team;
+
+    const validIds = new Set(byStore.map(x => x.id));
+    STATE.teamFilterStaffIds = STATE.teamFilterStaffIds.filter(id => validIds.has(id));
+    const selStaffIds = STATE.teamFilterStaffIds;
+    const displayed = selStaffIds.length ? byStore.filter(x => selStaffIds.includes(x.id)) : byStore;
+
+    const rows = displayed.map(u2 => `
         <tr>
-          <td>
-            <b>${esc(u.name)}</b>
-            <div class="badge-role">${esc(u.email)}</div>
-          </td>
-          <td>${esc(roleLabel(u.role))}</td>
-          <td>${u.role === 'area_manager' ? (u.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u.storeId))}</td>
-          <td>${u.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
-          <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u.id}">Edit</button></td>
+          <td><b>${esc(u2.name)}</b><div class="badge-role">${esc(u2.email)}</div></td>
+          <td>${esc(roleLabel(u2.role))}</td>
+          <td>${u2.role === 'area_manager' ? (u2.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u2.storeId))}</td>
+          <td>${u2.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
+          <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u2.id}">Edit</button></td>
         </tr>`).join('');
 
+    let storeBtnLabel = "All Stores";
+    if (selStoreIds.length > 0) {
+        storeBtnLabel = selStoreIds.map(storeName).filter(Boolean).join(', ');
+        if (storeBtnLabel.length > 25) storeBtnLabel = `${selStoreIds.length} stores selected`;
+    }
+    const storeOptions = allStores.map(st => {
+        const checked = selStoreIds.includes(st.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="team-store-checkbox" value="${st.id}" ${checked}>${esc(st.name)}</label>`;
+    }).join('');
+
+    let staffBtnLabel = "All Staff";
+    if (selStaffIds.length > 0) {
+        staffBtnLabel = selStaffIds.map(id => { const s = byStore.find(x => x.id === id); return s ? s.name : ''; }).filter(Boolean).join(', ');
+        if (staffBtnLabel.length > 25) staffBtnLabel = `${selStaffIds.length} staff selected`;
+    }
+    const staffOptions = byStore.map(s => {
+        const checked = selStaffIds.includes(s.id) ? 'checked' : '';
+        return `<label class="multiselect-dropdown-item"><input type="checkbox" class="team-staff-checkbox" value="${s.id}" ${checked}>${esc(s.name)}</label>`;
+    }).join('');
+
     return `
-      <div class="section-title">All Employees<span class="hint">${STATE.users.filter(u => u.role !== 'admin').length} people</span></div>
+      <div class="filter-bar">
+          <div style="font-size:12px;color:var(--text-soft);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Filter:</div>
+          <div class="multiselect-dropdown ${STATE.activeDropdown === 'teamStore' ? 'open' : ''}" id="teamStoreDropdown">
+              <div class="multiselect-dropdown-btn" data-dropdown-toggle="teamStore">${esc(storeBtnLabel)}</div>
+              <div class="multiselect-dropdown-content">${storeOptions || '<div class="empty-note">No stores available</div>'}</div>
+          </div>
+          <div class="multiselect-dropdown ${STATE.activeDropdown === 'teamStaff' ? 'open' : ''}" id="teamStaffDropdown">
+              <div class="multiselect-dropdown-btn" data-dropdown-toggle="teamStaff">${esc(staffBtnLabel)}</div>
+              <div class="multiselect-dropdown-content">${staffOptions || '<div class="empty-note">No staff in scope</div>'}</div>
+          </div>
+      </div>
+      <div class="section-title">All Employees<span class="hint">${displayed.length} people</span></div>
       <button class="btn btn-amber btn-sm btn-block" id="addEmployeeBtn">+ Add employee</button>
       <div class="table-wrap mobile-table-cards" style="margin-top:14px;">
         <table>
@@ -650,7 +783,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
         }
 
         const newEmp = {
-            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true
+            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true, mustChangePassword: true
         };
 
         STATE.users.push(newEmp);
@@ -724,29 +857,22 @@ export function addStoreModal(triggerRender, showToast, uidGenerator, getGeoLoca
     });
 }
 
-export function manualPunchModal(triggerRender, showToast, uidGenerator) {
+export function manualPunchModal(triggerRender, showToast, uidGenerator, loc, storeId, shiftNumber, homeStoreId) {
     const u = STATE.user;
-    // Area managers (no fixed store) choose which store the missed punch was at.
-    const storeChoices = u.storeId ? [] : (u.role === 'area_manager' ? storesForUser(u) : []);
-    const storeField = storeChoices.length ? `<div class="field"><label>Store</label><select id="manualStore">${storeChoices.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>` : '';
-    const shiftField = `<div class="field" ><label for="manualShift">Shift</label>
-        <select id="manualShift" required>
-          <option value="" disabled selected>Select a shift</option>
-          <option value="1">Shift 1</option>
-          <option value="2">Shift 2</option>
-        </select>
-      </div>`;
+    const store = STATE.stores.find(s => s.id === storeId);
+    const shiftLabel = shiftNumber === 2 ? 'Shift 2' : 'Shift 1';
+
     const content = `
     <h3>Request Manual Punch-In</h3>
     <p style="font-size:12.5px;color:var(--text-soft);margin:8px 0 14px;">
-      Missed punching in today? Enter your actual arrival time and a reason. This is sent to your
+      Missed punching in today? Enter your actual arrival time and reason for being late. This is sent to your
       store manager / area manager / owner for approval and only counts once approved.
     </p>
+    <div class="field"><label>Store (detected)</label><div class="static-value">${esc(store ? store.name : '—')}</div></div>
+    <div class="field"><label>Shift</label><div class="static-value">${esc(shiftLabel)}</div></div>
     <form id="manualPunchForm">
-      ${storeField}
-      ${shiftField}
       <div class="field"><label>Arrival time (today)</label><input type="time" id="manualTime" required></div>
-      <div class="field"><label>Reason for missing punch-in</label><textarea id="manualReason" rows="2" required placeholder="e.g. Phone battery died, GPS not working…"></textarea></div>
+      <div class="field"><label>Reason for being late</label><textarea id="manualReason" rows="2" required placeholder="e.g. Traffic delay, phone battery died…"></textarea></div>
       <div class="modal-actions">
         <button type="submit" class="btn btn-primary">Submit for approval</button>
         <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
@@ -755,61 +881,34 @@ export function manualPunchModal(triggerRender, showToast, uidGenerator) {
   `;
 
     openModal(content);
-
     document.getElementById('closeModalBtn').addEventListener('click', closeModal);
 
     document.getElementById('manualPunchForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const timeVal = document.getElementById('manualTime').value;      // "HH:MM"
+        const timeVal = document.getElementById('manualTime').value;
         const reason = document.getElementById('manualReason').value.trim();
-        const storeSel = document.getElementById('manualStore');
-        const storeId = storeSel ? storeSel.value : u.storeId;
-        const shiftSel = document.getElementById('manualShift');
-        const shiftNumber = shiftSel ? (parseInt(shiftSel.value, 10) === 2 ? 2 : 1) : 1;
         if (!timeVal || !reason) return;
-        if (!shiftSel) {
-            alert('select a shift for the manual punch-in');
-            return;
-        }
-        if (!storeId) {
-            alert('Select a store for the manual punch-in.');
-            return;
-        }
 
         const now = new Date();
         const [hh, mm] = timeVal.split(':').map(Number);
         const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
-        if (dt.getTime() > now.getTime()) {
-            alert('Arrival time cannot be in the future.');
-            return;
-        }
+        if (dt.getTime() > now.getTime()) { alert('Arrival time cannot be in the future.'); return; }
 
         const {localDateStr, isLateAt} = await import('./helpers.js');
         const {persistAttendance} = await import('./services.js');
         const date = localDateStr(now);
-        const store = STATE.stores.find(s => s.id === storeId);
 
-        // Replace any rejected request for today so a fresh one can be raised.
         STATE.attendance = STATE.attendance.filter(a => !(a.userId === u.id && a.date === date && a.approvalStatus === 'rejected'));
 
         STATE.attendance.push({
-            id: uidGenerator(),
-            userId: u.id,
-            storeId,
-            date,
-            checkInTime: dt.toISOString(),
-            checkInLoc: null,
-            checkOutTime: null,
-            checkOutLoc: null,
-            checkOutHistory: [],
-            shift: shiftNumber,
-            late: isLateAt(dt, store, shiftNumber),
-            manual: true,
-            manualReason: reason,
-            approvalStatus: 'pending',
-            requestedAt: now.toISOString(),
-            decidedBy: null,
-            decidedAt: null
+            id: uidGenerator(), userId: u.id,
+            storeId, homeStoreId: homeStoreId || null,
+            date, checkInTime: dt.toISOString(), checkInLoc: loc || null,
+            checkOutTime: null, checkOutLoc: null, checkOutHistory: [],
+            shift: shiftNumber, late: isLateAt(dt, store, shiftNumber),
+            manual: true, manualReason: reason,
+            approvalStatus: 'pending', requestedAt: now.toISOString(),
+            decidedBy: null, decidedAt: null
         });
 
         await persistAttendance();
@@ -935,6 +1034,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
 
         if (newPassword) {
             emp.password = newPassword;
+            emp.mustChangePassword = true;
         }
 
         const {persistUsers} = await import('./services.js');
@@ -1174,4 +1274,568 @@ export function createTaskModal(triggerRender, showToast, uidGenerator, persistT
         showToast('Task created successfully.');
         triggerRender();
     });
+}
+
+export function openRejectReasonModal(rosterId, kind) {
+    const content = `
+      <h3>Reject Roster</h3>
+      <form id="rejectReasonForm" style="margin-top:14px;">
+        <div class="field"><label>Reason for rejection</label><textarea id="rejectReasonInput" rows="3" required placeholder="Explain what needs to change"></textarea></div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-danger">Reject</button>
+          <button type="button" class="btn btn-ghost" id="closeModalBtn">Cancel</button>
+        </div>
+      </form>`;
+    openModal(content);
+    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+    document.getElementById('rejectReasonForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const reason = document.getElementById('rejectReasonInput').value.trim();
+        if (!reason) return;
+        const rec = STATE.dutyRosters.find(r => r.id === rosterId); if (!rec) return;
+        rec.status = 'rejected'; rec.decidedBy = STATE.user.id; rec.decidedAt = new Date().toISOString();
+        rec.rejectionReason = reason;
+        closeModal();
+        await persistDutyRosters();
+        showToast(kind === 'am' ? 'Visit plan rejected.' : 'Roster rejected.');
+        render();
+    });
+}
+
+export function renderForcePasswordChange() {
+    return `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="brand-mark"><div class="brand-clock"></div><div><div class="brand-name">SHIFTLEDGER</div><div class="brand-sub">Store Ops Punch Clock</div></div></div>
+      <h1>Set a new password</h1>
+      <p class="lead">Your password was reset by an admin/manager. Please set a new password to continue.</p>
+      <div id="forcePassError" style="color:var(--alert);font-size:12.5px;margin-bottom:8px;"></div>
+      <form id="forcePasswordForm">
+        <div class="field"><label>New Password</label><input type="password" id="newPasswordInput" required minlength="6"></div>
+        <div class="field"><label>Confirm Password</label><input type="password" id="confirmPasswordInput" required minlength="6"></div>
+        <button class="btn btn-primary btn-block" type="submit">Set Password &amp; Continue</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+export const DAY_TYPE_OPTIONS = [
+    ['shift1', 'Shift 1'], ['shift2', 'Shift 2'], ['half_day', 'Half Day'],
+    ['weekly_off', 'Weekly Off'], ['leave', 'Leave'], ['cross_store', 'Cross-Store Visit']
+];
+const dayTypeLabel = v => (DAY_TYPE_OPTIONS.find(o => o[0] === v) || [, v])[1];
+
+function rosterStatusPill(status) {
+    const cls = { draft: 'pill-late', pending_approval: 'pill-pending', approved: 'pill-present', rejected: 'pill-rejected' }[status] || '';
+    const label = { draft: 'Draft', pending_approval: 'Pending Approval', approved: 'Approved', rejected: 'Rejected' }[status] || status;
+    return `<span class="pill ${cls}">${label}</span>`;
+}
+
+export function renderDutyRosterPage() {
+    const u = STATE.user;
+    const currentWeekStart = mondayOf(todayStr());
+    const offset = STATE.rosterWeekOffset || 0;
+    const weekStart = shiftWeek(currentWeekStart, offset);
+    const dates = weekDates(weekStart);
+    const minOffset = -9, maxOffset = 1;
+
+    let html = `
+    <div class="section-title">
+      Week of ${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}
+      <span class="month-switch">
+        <button data-roster-week="-1" ${offset <= minOffset ? 'disabled' : ''}>‹</button>
+        <span>${offset === 0 ? 'This week' : (offset < 0 ? `${Math.abs(offset)} wk ago` : `${offset} wk ahead`)}</span>
+        <button data-roster-week="1" ${offset >= maxOffset ? 'disabled' : ''}>›</button>
+      </span>
+    </div>`;
+
+    // NEW: multi-store export for AM (their stores) and Admin (all stores)
+    if (u.role === 'area_manager' || u.role === 'admin') {
+        const scope = u.role === 'admin' ? 'all' : 'mine';
+        html += `
+        <div class="roster-bulk-export card" style="margin-bottom:14px;padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+          <div style="font-size:13px;color:var(--text-soft);">
+            <b style="color:var(--text);">Share all store rosters</b>
+            <div style="font-size:12px;margin-top:2px;">One image · week of ${fmtDateShort(dates[0])} – ${fmtDateShort(dates[6])}</div>
+          </div>
+          <div class="roster-export-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-roster-export-all="1" data-scope="${scope}" data-week="${weekStart}">
+              📷 Export all stores
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" data-roster-share-all-wa="1" data-scope="${scope}" data-week="${weekStart}">
+              💬 WhatsApp all stores
+            </button>
+          </div>
+        </div>`;
+    }
+
+    // Wrap store sections so we can capture them as a group
+    if (u.role === 'store_manager') {
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
+        html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
+        html += `</div>`;
+    } else if (u.role === 'area_manager') {
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
+        storesForUser(u).forEach(s => {
+            html += renderStoreRosterSection(s.id, weekStart, dates, u);
+        });
+        html += renderAmRosterSection(u, weekStart, dates);
+        html += `</div>`;
+    } else if (u.role === 'admin') {
+        html += `<div class="section-title">Store Rosters — All Locations</div>`;
+        html += `<div class="roster-stores-bundle" data-week="${weekStart}">`;
+        STATE.stores.forEach(s => {
+            html += renderStoreRosterSection(s.id, weekStart, dates, u);
+        });
+        STATE.users.filter(x => x.role === 'area_manager').forEach(am => { html += renderAmRosterSection(am, weekStart, dates); });
+        html += `</div>`;
+    } else if (u.role === 'sales_staff') {
+        html += renderStoreRosterSection(u.storeId, weekStart, dates, u);
+    }
+    return html;
+}
+
+function renderStoreRosterSection(storeId, weekStart, dates, viewer) {
+    const store = STATE.stores.find(s => s.id === storeId);
+    if (!store) return '';
+    const roster = rosterFor(storeId, weekStart);
+    const staff = activeStaffForStore(storeId);
+    const isSM = viewer.role === 'store_manager' && viewer.storeId === storeId;
+    const isAM = viewer.role === 'area_manager' && storeIdsForUser(viewer).includes(storeId); // CHANGED: scope AM to stores they oversee
+    const isAdmin = viewer.role === 'admin';
+    const isStaffViewer = viewer.role === 'sales_staff';
+
+    const isDraft = roster && roster.status === 'draft';
+    const isRejected = roster && roster.status === 'rejected';
+    const hiddenFromViewer = isDraft && !isSM && !(isAM && roster && roster.createdBy === viewer.id); // CHANGED: AM can still see their own draft
+
+    const canCreate = (isSM || isAM) && !roster; // NEW: either role can start one from scratch
+    const canContinueDraft = isDraft && (isSM || (isAM && roster.createdBy === viewer.id)); // NEW: AM limited to their own draft
+    const canCreateOrContinueDraft = canCreate || canContinueDraft; // CHANGED
+    const canResubmit = isRejected && (isSM || isAM); // NEW: either role can fix and resend after rejection
+    const canEditCorrection = (isAM || isAdmin) && roster && !isDraft && !isRejected;
+    const canApprove = (isAM || isAdmin) && roster && roster.status === 'pending_approval'; // unchanged — already allows self-approval
+
+    let bodyHtml;
+    if (canCreateOrContinueDraft) {
+        bodyHtml = renderRosterForm(storeId, weekStart, dates, staff, isDraft ? roster : null, true);
+    } else if (!roster || hiddenFromViewer) {
+        bodyHtml = `<div class="empty-note">Roster not yet submitted${isAM ? ' by the store manager, or you can create one below.' : '.'}</div>`;
+    } else {
+        const showEditable = (STATE.rosterEditingId === roster.id && (isAM || isAdmin)) || canResubmit; // CHANGED: canResubmit replaces canSmResubmit, now covers AM too
+        if (showEditable) {
+            const reasonBanner = isRejected && roster.rejectionReason
+                ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(220,53,69,0.08);border-radius:6px;color:var(--alert);font-size:12px;"><b>Rejected — reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+            bodyHtml = reasonBanner + renderRosterForm(storeId, weekStart, dates, staff, roster, false);
+        } else if (isStaffViewer && roster.status !== 'approved') {
+            bodyHtml = `<div class="empty-note">Roster not yet approved for this week.</div>`;
+        } else {
+            bodyHtml = renderRosterTable(roster, staff, dates, storeId);
+            bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
+            if (canEditCorrection) bodyHtml += `<button class="btn btn-ghost btn-sm" data-roster-edit="${roster.id}">Edit corrections</button>`;
+            if (canApprove) bodyHtml += ` <button class="btn btn-primary btn-sm" data-roster-approve="${roster.id}">Approve</button> <button class="btn btn-danger btn-sm" data-roster-reject="${roster.id}">Reject</button>`;
+            bodyHtml += `</div>`;
+        }
+    }
+
+    const amVisits = amVisitsForStore(storeId, weekStart);
+    const amVisitHtml = amVisits.length ? `
+      <div class="text-faint" style="margin-top:10px;font-size:12px;">
+        ${amVisits.map(v => `<div>👤 ${esc(userName(v.amId))} visiting: ${v.days.map(dk => `${DAY_LABELS[dk]} (${dayTypeLabel(v.entries[dk].type)})`).join(', ')}</div>`).join('')}
+      </div>` : '';
+
+    const createdByLine = roster && roster.createdBy // NEW
+        ? `<div class="text-faint" style="font-size:11px;margin-bottom:4px;">Created by ${esc(userName(roster.createdBy))}${roster.createdByRole === 'area_manager' ? ' (Area Manager)' : ''}</div>` : '';
+
+    const showExport = canExportRoster(viewer) && roster && !hiddenFromViewer
+        && !(isStaffViewer && roster.status !== 'approved');
+
+    return `
+<div class="card roster-export-card" style="margin-bottom:16px;"
+     data-export-kind="store" data-export-id="${storeId}" data-export-week="${weekStart}">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <h3 style="margin:0;">${esc(store.name)}</h3>
+      ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
+    </div>
+    ${rosterExportActions('store', storeId, weekStart, showExport)}
+  </div>
+  ${createdByLine}
+  <div class="roster-export-target">
+    ${bodyHtml}
+    ${amVisitHtml}
+  </div>
+</div>`;
+}
+
+const CROSS_SHIFT_OPTIONS = [['shift1','Shift 1'],['shift2','Shift 2'],['half_day','Half Day']];
+
+const ROSTER_TYPE_META = {
+    shift1:      { label: 'Shift 1',           color: '#2563eb' },
+    shift2:      { label: 'Shift 2',           color: '#7c3aed' },
+    half_day:    { label: 'Half Day',          color: '#d97706' },
+    weekly_off:  { label: 'Weekly Off',        color: '#64748b' },
+    leave:       { label: 'Leave',             color: '#dc2626' },
+    cross_store: { label: 'Cross-Store Visit', color: '#0d9488' }
+};
+
+function buildRosterAssignmentIndex(staff, existingRoster, dates) {
+    const entryFor = userId => existingRoster
+        ? (existingRoster.entries.find(e => e.userId === userId) || { days: {}, cross: {} })
+        : { days: {}, cross: {} };
+
+    // dayKey → userId → { type, cross? }
+    const dayMap = {};
+    DAY_KEYS.forEach(dk => { dayMap[dk] = {}; });
+
+    staff.forEach(s => {
+        const entry = entryFor(s.id);
+        DAY_KEYS.forEach((dk, i) => {
+            if (approvedLeaveForDay(s.id, dates[i])) {
+                dayMap[dk][s.id] = { type: 'leave', locked: true };
+                return;
+            }
+            const val = entry.days[dk] || '';
+            if (!val) return;
+            const cell = { type: val, locked: false };
+            if (val === 'cross_store' && entry.cross && entry.cross[dk]) cell.cross = entry.cross[dk];
+            dayMap[dk][s.id] = cell;
+        });
+    });
+    return dayMap;
+}
+
+function renderRosterChip(userId, { locked = false } = {}) {
+    const name = userName(userId);
+    return `<span class="roster-chip${locked ? ' locked' : ''}" data-user="${userId}">
+      <span class="chip-name">${esc(name)}</span>
+      ${locked ? '' : `<button type="button" class="chip-x" data-roster-chip-remove="${userId}" aria-label="Remove">×</button>`}
+    </span>`;
+}
+
+function renderRosterForm(storeId, weekStart, dates, staff, existingRoster, isDraftMode) {
+    const dayMap = buildRosterAssignmentIndex(staff, existingRoster, dates);
+    const otherStores = STATE.stores.filter(x => x.id !== storeId);
+
+    const typeRows = DAY_TYPE_OPTIONS.map(([type]) => {
+        const meta = ROSTER_TYPE_META[type] || { label: type };
+        const isLeave = type === 'leave';
+        const cells = DAY_KEYS.map((dk, i) => {
+            const assigned = Object.entries(dayMap[dk])
+                .filter(([, v]) => v.type === type)
+                .map(([uid, v]) => ({ uid, locked: !!v.locked, cross: v.cross }));
+
+            const chips = assigned.map(a => renderRosterChip(a.uid, { locked: isLeave || a.locked })).join('');
+
+            let crossFields = '';
+            if (type === 'cross_store') {
+                // Use first assignee's meta as the day-level store/shift (applies to all CS that day)
+                const meta0 = assigned[0]?.cross || {};
+                const storeOpts = otherStores.map(x =>
+                    `<option value="${x.id}" ${meta0.storeId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`
+                ).join('');
+                const shiftOpts = CROSS_SHIFT_OPTIONS.map(([v, l]) =>
+                    `<option value="${v}" ${meta0.shiftType === v ? 'selected' : ''}>${l}</option>`
+                ).join('');
+                crossFields = `<div class="roster-cross-fields">
+                  <select class="roster-cross-store-select" data-day="${dk}">
+                    <option value="" disabled ${!meta0.storeId ? 'selected' : ''}>Store…</option>
+                    ${storeOpts}
+                  </select>
+                  <select class="roster-cross-shift-select" data-day="${dk}">
+                    <option value="" disabled ${!meta0.shiftType ? 'selected' : ''}>Shift…</option>
+                    ${shiftOpts}
+                  </select>
+                </div>`;
+            }
+
+            const addBtn = `<button type="button" class="roster-add-btn" data-roster-add data-type="${type}" data-day="${dk}">+ Add</button>`;
+
+            return `<td>
+              <div class="roster-lane" data-type="${type}" data-day="${dk}">
+                <div class="roster-chips" data-roster-chips data-type="${type}" data-day="${dk}">${chips || ''}</div>
+                ${crossFields}
+                ${addBtn}
+              </div>
+            </td>`;
+        }).join('');
+
+        return `<tr>
+          <th>
+            <div class="roster-type-label">
+              <span class="roster-type-dot" style="background:${meta.color || '#94a3b8'}"></span>${esc(meta.label)}
+            </div>
+          </th>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    // Unassigned helper row
+    const unassignedRow = DAY_KEYS.map(dk => {
+        const free = staff.filter(s => !dayMap[dk][s.id]);
+        const chips = free.map(s =>
+            `<span class="roster-chip" data-user="${s.id}"><span class="chip-name">${esc(s.name)}</span></span>`
+        ).join('');
+        return `<td>
+          <div class="roster-lane" data-type="unassigned" data-day="${dk}">
+            <div class="roster-chips" data-roster-unassigned data-day="${dk}">${chips || '<span class="text-faint" style="font-size:11px;">All assigned</span>'}</div>
+          </div>
+        </td>`;
+    }).join('');
+
+    const bootstrap = {
+        staff: staff.map(s => ({ id: s.id, name: s.name })),
+        dayMap
+    };
+    const bootJson = JSON.stringify(bootstrap).replace(/</g, '\\u003c');
+
+    return `
+    <form class="roster-form" data-store="${storeId}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <textarea class="roster-bootstrap" hidden>${bootJson}</textarea>
+      <script type="application/json" class="roster-bootstrap">${esc(JSON.stringify(bootstrap))}</script>
+      <div class="roster-hint">
+        <span><b>How to fill:</b> tap <b>+ Add</b> to place someone on a duty. Each person can only sit on <b>one</b> duty per day.</span>
+        <!--<span>Leave is locked from approved leave requests.</span>-->
+      </div>
+      <div class="roster-grid-wrap">
+        <table class="roster-grid">
+          <thead>
+            <tr>
+              <th>Duty</th>
+              ${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span style="font-weight:500;text-transform:none;letter-spacing:0;">${fmtDateShort(dates[i])}</span></th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${typeRows}
+            <tr>
+              <th>
+                <div class="roster-type-label">
+                  <span class="rt-name" style="color:var(--text-soft);font-weight:600;">Unassigned</span>
+                  <span class="rt-count">still free that day</span>
+                </div>
+              </th>
+              ${unassignedRow}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions" style="margin-top:14px;">
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-save-draft="1">Save Draft</button>
+        <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
+        ${isDraftMode && existingRoster
+        ? `<button type="button" class="btn btn-danger btn-sm" data-roster-delete-draft="${existingRoster.id}">Delete Draft</button>`
+        : (existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-roster-cancel-edit="1">Cancel</button>` : '')}
+      </div>
+    </form>`;
+}
+
+function renderRosterTable(roster, staff, dates, storeId) {
+    const dayMap = buildRosterAssignmentIndex(staff, roster, dates);
+
+    const typeRows = DAY_TYPE_OPTIONS.map(([type]) => {
+        const meta = ROSTER_TYPE_META[type] || { label: type };
+        // ✅ NEW: check if ANY staff is assigned to this type across the whole week
+        const hasAnyStaffThisType = DAY_KEYS.some(dk =>
+            Object.values(dayMap[dk]).some(v => v.type === type)
+        );
+        if (!hasAnyStaffThisType) return ''; // skip the entire row
+
+        const cells = DAY_KEYS.map(dk => {
+            const people = Object.entries(dayMap[dk]).filter(([, v]) => v.type === type);
+            const chips = people.map(([uid, v]) => {
+                let extra = '';
+                if (type === 'cross_store' && v.cross) {
+                    extra = ` · ${storeName(v.cross.storeId)} / ${dayTypeLabel(v.cross.shiftType)}`;
+                }
+                return `<span class="roster-chip locked"><span class="chip-name">${esc(userName(uid))}${esc(extra)}</span></span>`;
+            }).join('');
+            return `<td><div class="roster-ro-lane roster-lane" data-type="${type}"><div class="roster-chips">${chips || '<span class="text-faint" style="font-size:11px;">—</span>'}</div></div></td>`;
+        }).join('');
+        return `<tr>
+          <th><div class="roster-type-label"><span class="rt-name">${esc(meta.label)}</span></div></th>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    let statusLine = '';
+    if (roster.submittedAt) {
+        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0, 10))} by ${esc(userName(roster.submittedBy))}`;
+        if (roster.editedBy) statusLine += ` · Edited by ${esc(userName(roster.editedBy))}`;
+        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`;
+        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`;
+    }
+    const reasonLine = roster.status === 'rejected' && roster.rejectionReason
+        ? `<div style="margin-top:4px;color:var(--alert);font-size:11px;"><b>Rejection reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+
+    return `
+    <div class="roster-grid-wrap">
+      <table class="roster-grid">
+        <thead>
+          <tr>
+            <th>Duty</th>
+            ${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span style="font-weight:500;text-transform:none;letter-spacing:0;">${fmtDateShort(dates[i])}</span></th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>${typeRows}</tbody>
+      </table>
+    </div>
+    ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
+    ${reasonLine}`;
+}
+
+function renderAmRosterSection(am, weekStart, dates) {
+    const roster = amRosterFor(am.id, weekStart);
+    const viewer = STATE.user;
+    const isSelf = viewer.id === am.id;
+    const isAdmin = viewer.role === 'admin';
+    const isDraft = roster && roster.status === 'draft';
+    const isRejected = roster && roster.status === 'rejected'; // NEW
+    const hiddenFromViewer = isDraft && !isSelf;
+    const canCreateOrContinueDraft = isSelf && (!roster || isDraft);
+    const canSelfResubmit = isSelf && isRejected; // NEW
+    const canEdit = isAdmin && roster && !isDraft && !isRejected; // CHANGED
+    const canApprove = isAdmin && roster && roster.status === 'pending_approval';
+    const amStores = storesForUser(am);
+
+    let bodyHtml;
+    if (canCreateOrContinueDraft) {
+        bodyHtml = renderAmRosterForm(am, weekStart, dates, isDraft ? roster : null, amStores, true);
+    } else if (!roster || hiddenFromViewer) {
+        bodyHtml = `<div class="empty-note">No visit plan submitted yet.</div>`;
+    } else {
+        const showEditable = (STATE.rosterEditingId === roster.id && isAdmin) || canSelfResubmit; // CHANGED
+        if (showEditable) {
+            const reasonBanner = isRejected && roster.rejectionReason // NEW
+                ? `<div style="margin-bottom:10px;padding:8px 10px;background:rgba(220,53,69,0.08);border-radius:6px;color:var(--alert);font-size:12px;"><b>Rejected — reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+            bodyHtml = reasonBanner + renderAmRosterForm(am, weekStart, dates, roster, amStores, false); // NEW
+        } else {
+            bodyHtml = renderAmRosterTable(roster, dates);
+            bodyHtml += `<div class="modal-actions" style="margin-top:10px;">`;
+            if (canEdit) bodyHtml += `<button class="btn btn-ghost btn-sm" data-am-roster-edit="${roster.id}">Edit corrections</button>`;
+            if (canApprove) bodyHtml += ` <button class="btn btn-primary btn-sm" data-am-roster-approve="${roster.id}">Approve</button> <button class="btn btn-danger btn-sm" data-am-roster-reject="${roster.id}">Reject</button>`;
+            bodyHtml += `</div>`;
+        }
+    }
+
+    const showExport = canExportRoster(viewer) && roster && !hiddenFromViewer && roster.status === 'approved';
+
+    return `
+<div class="card roster-export-card" style="margin-bottom:16px;"
+     data-export-kind="am" data-export-id="${am.id}" data-export-week="${weekStart}">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <h3 style="margin:0;">${esc(am.name)}'s Weekly Visit Plan</h3>
+      ${roster && !hiddenFromViewer ? rosterStatusPill(roster.status) : ''}
+    </div>
+    ${rosterExportActions('am', am.id, weekStart, showExport)}
+  </div>
+  <div class="roster-export-target">
+    ${bodyHtml}
+  </div>
+</div>`;
+}
+
+// const AM_DAY_TYPE_OPTIONS = DAY_TYPE_OPTIONS.filter(([v]) => v !== 'cross_store');
+
+function renderAmRosterForm(am, weekStart, dates, existingRoster, amStores, isDraftMode) {
+    // Shift-type options for AM visit plan (no cross_store)
+    const typeOptionsList = [
+        ['shift1', 'Shift 1'],
+        ['shift2', 'Shift 2'],
+        ['half_day', 'Half Day'],
+        ['weekly_off', 'Weekly Off'],
+        ['leave', 'Leave']
+    ];
+
+    const cells = DAY_KEYS.map((dk, i) => {
+        const entry = existingRoster ? (existingRoster.days[dk] || {}) : {};
+        const currentVal = entry.type || '';
+        const currentStore = entry.storeId || '';
+        // Store required for working days; optional for off/leave (still shown)
+        // const storeAlwaysUseful = true;
+
+        const typeOptions = typeOptionsList.map(([v, l]) =>
+            `<option value="${v}" ${currentVal === v ? 'selected' : ''}>${l}</option>`
+        ).join('');
+        const storeOptions = amStores.map(s =>
+            `<option value="${s.id}" ${currentStore === s.id ? 'selected' : ''}>${esc(s.name)}</option>`
+        ).join('');
+
+        return `<td>
+          <div class="am-day-cell">
+            <label class="am-field-label">Shift type</label>
+            <select class="am-roster-type-select" data-day="${dk}" required>
+              <option value="" disabled ${!currentVal ? 'selected' : ''}>Select…</option>
+              ${typeOptions}
+            </select>
+            <label class="am-field-label" style="margin-top:6px;">Store</label>
+            <select class="am-roster-store-select" data-day="${dk}">
+              <option value="" ${!currentStore ? 'selected' : ''}>Select store…</option>
+              ${storeOptions}
+            </select>
+          </div>
+        </td>`;
+    }).join('');
+
+    return `
+    <form class="am-roster-form" data-am-user="${am.id}" data-week-start="${weekStart}" data-roster-id="${existingRoster ? existingRoster.id : ''}">
+      <div class="text-faint" style="font-size:12px;margin-bottom:8px;">
+        Pick a <b>shift type</b> and <b>store</b> for each day. Store is required for Shift 1 / Shift 2 / Half Day.
+      </div>
+      <div class="table-wrap">
+        <table class="am-roster-grid">
+          <thead>
+            <tr>${DAY_KEYS.map((dk, i) =>
+        `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`
+    ).join('')}</tr>
+          </thead>
+          <tbody><tr>${cells}</tr></tbody>
+        </table>
+      </div>
+      <div class="modal-actions" style="margin-top:10px;">
+        <button type="button" class="btn btn-ghost btn-sm" data-am-roster-save-draft="1">Save Draft</button>
+        <button type="submit" class="btn btn-primary btn-sm">Submit for Approval</button>
+        ${isDraftMode && existingRoster
+        ? `<button type="button" class="btn btn-danger btn-sm" data-am-roster-delete-draft="${existingRoster.id}">Delete Draft</button>`
+        : (existingRoster ? `<button type="button" class="btn btn-ghost btn-sm" data-am-roster-cancel-edit="1">Cancel</button>` : '')}
+      </div>
+    </form>`;
+}
+
+function renderAmRosterTable(roster, dates) {
+    const cells = DAY_KEYS.map(dk => {
+        const entry = roster.days[dk] || {};
+        let label = entry.type ? dayTypeLabel(entry.type) : '—';
+        if (entry.storeId) label += ` (${esc(storeName(entry.storeId))})`;
+        return `<td>${label}</td>`;
+    }).join('');
+    let statusLine = '';
+    if (roster.submittedAt) {
+        statusLine = `Submitted ${fmtDate(roster.submittedAt.slice(0,10))} by ${esc(userName(roster.submittedBy))}`;
+        if (roster.editedBy) statusLine += ` · Edited by ${esc(userName(roster.editedBy))}`;
+        if (roster.status === 'approved' && roster.decidedBy) statusLine += ` · Approved by ${esc(userName(roster.decidedBy))}`;
+        if (roster.status === 'rejected' && roster.decidedBy) statusLine += ` · Rejected by ${esc(userName(roster.decidedBy))}`;
+    }
+    const reasonLine = roster.status === 'rejected' && roster.rejectionReason
+        ? `<div style="margin-top:4px;color:var(--alert);font-size:11px;"><b>Rejection reason:</b> ${esc(roster.rejectionReason)}</div>` : '';
+    return `<div class="table-wrap"><table><thead><tr>${DAY_KEYS.map((dk, i) => `<th>${DAY_LABELS[dk]}<br><span class="text-faint">${fmtDateShort(dates[i])}</span></th>`).join('')}</tr></thead><tbody><tr>${cells}</tr></tbody></table></div>
+      ${statusLine ? `<div class="text-faint" style="margin-top:6px;font-size:11px;">${statusLine}</div>` : ''}
+      ${reasonLine}`;
+}
+
+function canExportRoster(viewer) {
+    return ['store_manager', 'area_manager', 'admin'].includes(viewer.role);
+}
+
+function rosterExportActions(kind, id, weekStart, visible) {
+    if (!visible) return '';
+    return `
+      <div class="roster-export-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-export-img="${kind}" data-id="${id}" data-week="${weekStart}">
+          📷 Export image
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" data-roster-share-wa="${kind}" data-id="${id}" data-week="${weekStart}">
+          💬 WhatsApp
+        </button>
+      </div>`;
 }
