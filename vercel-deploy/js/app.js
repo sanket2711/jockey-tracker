@@ -23,6 +23,7 @@ import {
     editEmployeeModal, editStoreModal, createTaskModal, renderForcePasswordChange, renderDutyRosterPage,
     openRejectReasonModal, DAY_TYPE_OPTIONS
 } from './views.js';
+// import html2canvas from html2canvas;
 
 /* Export sub-lifecycle indicators out to templates safely */
 export { todayStr, RADIUS_M };

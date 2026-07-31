@@ -126,20 +126,38 @@ export function seedData() {
         },
     ];
     const users = [
-        { id: 'u_admin1', name: 'Sanket Baheti', email: 'sanketbaheti1@gmail.com', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
-        { id: 'u_area1', name: 'Dinesh Pardeshi', email: 'dinesh.area@sge.demo', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_a', 'st_b', 'st_c', 'st_d'], active: true },
-        { id: 'u_mgr_a', name: 'Sundar Maske', email: 'sundar.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_a', storeIds: null, active: true },
-        { id: 'u_mgr_b', name: 'Omkar Shine', email: 'omkar.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_b', storeIds: null, active: true },
-        { id: 'u_mgr_c', name: 'Kalyan Maske', email: 'kalyan.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_c', storeIds: null, active: true },
-        { id: 'u_mgr_d', name: 'Dinesh M43', email: 'dinesh.manager@sge.demo', password: 'manager123', role: 'store_manager', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_admin1', name: 'Sanket Baheti', email: 'sanket.baheti', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
+        { id: 'u_area1', name: 'Dinesh Pardeshi', email: 'dinesh.pardeshi', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_a', 'st_b', 'st_c', 'st_d'], active: true },
+        { id: 'u_mgr_a', name: 'Sundar Maske', email: 'sundar.maske', password: 'manager123', role: 'store_manager', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_mgr_b', name: 'Omkar Shinde', email: 'omkar.shinde', password: 'manager123', role: 'store_manager', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_mgr_c', name: 'Kalyan More', email: 'kalyan.more', password: 'manager123', role: 'store_manager', storeId: 'st_c', storeIds: null, active: true },
+        { id: 'u_mgr_d', name: 'Dinesh Vedpathak', email: 'dinesh.vedpathak', password: 'manager123', role: 'store_manager', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_staff_1', name: 'Adarsh Palkhe', email: 'adarsh.palkhe', password: 'staff123', role: 'sales_staff', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_staff_2', name: 'Aarti Giri', email: 'aarti.giri', password: 'staff123', role: 'sales_staff', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_staff_3', name: 'Ranita Karji', email: 'ranita.karji', password: 'staff123', role: 'sales_staff', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_staff_4', name: 'Reshma Ali', email: 'reshma.ali', password: 'staff123', role: 'sales_staff', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_staff_5', name: 'Tulshiram Shelar', email: 'tulshiram.shelar', password: 'staff123', role: 'sales_staff', storeId: 'st_a', storeIds: null, active: true },
+        { id: 'u_staff_6', name: 'Amol Chavan', email: 'amol.chavan', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_7', name: 'Datta Dombe', email: 'datta.dombe', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_8', name: 'Karuna Sawant', email: 'karuna.sawant', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_9', name: 'Trupti Satam', email: 'trupti.satam', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_10', name: 'Sagar Ahir', email: 'sagar.ahir', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_11', name: 'Supriya Kinagi', email: 'supriya.kinagi', password: 'staff123', role: 'sales_staff', storeId: 'st_b', storeIds: null, active: true },
+        { id: 'u_staff_12', name: 'Achal Kumar', email: 'achal.kumar', password: 'staff123', role: 'sales_staff', storeId: 'st_c', storeIds: null, active: true },
+        { id: 'u_staff_13', name: 'Sheetal Pawar', email: 'sheetal.pawar', password: 'staff123', role: 'sales_staff', storeId: 'st_c', storeIds: null, active: true },
+        { id: 'u_staff_14', name: 'Shrabani Sarkar', email: 'shrabani.sarkar', password: 'staff123', role: 'sales_staff', storeId: 'st_c', storeIds: null, active: true },
+        { id: 'u_staff_15', name: 'Hina', email: 'hina', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_staff_16', name: 'Mayuri', email: 'mayuri', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_staff_17', name: 'Pranav', email: 'pranav', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true },
+        { id: 'u_staff_18', name: 'Yash', email: 'yash', password: 'staff123', role: 'sales_staff', storeId: 'st_d', storeIds: null, active: true }
     ];
-    const staffNames = [
-        ['Adarsh Palkhe','st_a']
-    ];
-    staffNames.forEach((s, i) => {
-        users.push({ id: 'u_staff' + i, name: s[0], email: 'staff' + (i + 1) + '@sge.demo', password: 'staff123', role: 'sales_staff', storeId: s[1], storeIds: null, active: true });
-    });
-    const taskTitles = ['Open store & switch on lights', 'Clean & organize display', 'Close store & lock up'];
+    // const staffNames = [
+    //     ['Adarsh Palkhe','st_a']
+    // ];
+    // staffNames.forEach((s, i) => {
+    //     users.push({ id: 'u_staff' + i, name: s[0], email: 'staff' + (i + 1), password: 'staff123', role: 'sales_staff', storeId: s[1], storeIds: null, active: true });
+    // });
+    const taskTitles = ['Open store & turn on system', 'Clean & organize display', 'Close store & lock up'];
     const taskTemplates = [];
     stores.forEach(st => { taskTitles.forEach((t, i) => { taskTemplates.push({ id: 'tt_' + st.id + '_' + i, storeId: st.id, title: t, active: true, assignedTo: null, recurrence: { type: 'daily' } }); }); });
     return { stores, users, taskTemplates };
