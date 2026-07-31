@@ -94,10 +94,14 @@ a{color:inherit;}
 .demo-row:hover{background:var(--canvas);}
 
 /* ---------- App shell ---------- */
-.app{display:flex;min-height:100vh;}
-.sidebar{
-    width:220px;flex:none;background:var(--ink);color:#fff;
-    display:flex;flex-direction:column;padding:20px 0;
+.app { display: flex; height: 100vh; overflow: hidden; }
+.sidebar {
+    width: 220px; flex: none; background: var(--ink); color: #fff;
+    display: flex; flex-direction: column; padding: 20px 0;
+    height: 100vh;           /* lock to viewport */
+    position: sticky;        /* stays in place */
+    top: 0;
+    overflow-y: auto;        /* nav items scroll if too many */
 }
 .sidebar .brand-mark{padding:0 20px;margin-bottom:26px;}
 .sidebar .brand-mark .brand-clock{border-color:#fff;}
@@ -115,7 +119,7 @@ a{color:inherit;}
 .who-role{font-size:11px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;}
 .logout-link{font-size:12px;color:var(--amber);margin-top:10px;display:inline-block;cursor:pointer;}
 
-.main{flex:1;min-width:0;}
+.main { flex: 1; min-width: 0; overflow-y: auto; height: 100vh; }
 .topbar{
     background:var(--panel);border-bottom:1px solid var(--line);padding:16px 28px;
     display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5;
@@ -242,7 +246,9 @@ tr:last-child td{border-bottom:none;}
 @media (max-width: 760px) {
     .menu-toggle { display: inline-flex; }
 
-    .app { position: relative; overflow-x: hidden; }
+    .app { position: relative; overflow-x: visible; height: auto; }
+
+    .main { height: auto; overflow-y: visible; }
 
     .sidebar {
         position: fixed;
