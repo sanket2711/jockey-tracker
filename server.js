@@ -1,7 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 const app = express();
@@ -16,6 +15,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
+    // allow non-browser tools (curl/Postman have no Origin)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS: ' + origin));
@@ -25,11 +25,13 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
+// Explicit preflight handler (important with custom headers)
 app.options('*', cors());
 
-// ─── App-level API key check (proves this is our frontend, not user identity) ───
 const authMiddleware = (req, res, next) => {
+  // Never require API key on preflight
   if (req.method === 'OPTIONS') return next();
+
   const apiKey = req.headers['x-api-key'];
   if (apiKey !== process.env.API_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -37,16 +39,12 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
-// ─── MongoDB ──────────────────────────────────────────────────────────────────
-const DataSchema = new mongoose.Schema({
-  key: { type: String, required: true, unique: true },
-  value: { type: mongoose.Schema.Types.Mixed, required: true }
-}, { timestamps: true });
-const DataModel = mongoose.model('DataRecord', DataSchema);
-
+// Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI)
-  .then(async () => { await initSeedIfNeeded(); })
-  .catch(err => console.error('Database connection error:', err));
+    .then(async () => {
+      await initSeedIfNeeded();
+    })
+    .catch(err => console.error('Database connection error:', err));
 
 async function initSeedIfNeeded() {
   const existing = await DataModel.findOne({ key: 'users' });
@@ -85,89 +83,31 @@ async function initSeedIfNeeded() {
   }
 }
 
-// ─── Helpers: server-side scope resolution ────────────────────────────────────
-function authorizedStoreIdsFor(u) {
-  if (u.role === 'admin') return null;           // null = all stores
-  if (u.role === 'area_manager') return u.storeIds || [];
-  if (u.storeId) return [u.storeId];             // store_manager, sales_staff
-  return [];
-}
+const DataSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: mongoose.Schema.Types.Mixed, required: true }
+}, { timestamps: true });
 
-function scopeStores(all, storeIds) {
-  if (storeIds === null) return all;
-  return all.filter(s => storeIds.includes(s.id));
-}
+const DataModel = mongoose.model('DataRecord', DataSchema);
 
-function scopeUsers(all, u, storeIds) {
-  const safe = all.map(({ password, ...rest }) => rest);
-  if (u.role === 'admin') return safe;
-  if (u.role === 'area_manager') {
-    return safe.filter(x =>
-      x.role !== 'admin' &&
-      (storeIds.includes(x.storeId) || x.id === u.id)
-    );
-  }
-  if (u.role === 'store_manager') {
-    return safe.filter(x =>
-      (x.storeId === u.storeId && x.role === 'sales_staff') ||
-      x.id === u.id
-    );
-  }
-  // sales_staff sees only themselves
-  return safe.filter(x => x.id === u.id);
-}
-
-function scopeAttendance(all, u, storeIds) {
-  if (u.role === 'admin') return all;
-  if (u.role === 'area_manager' || u.role === 'store_manager') {
-    return all.filter(r => storeIds.includes(r.storeId) || storeIds.includes(r.homeStoreId));
-  }
-  return all.filter(r => r.userId === u.id);
-}
-
-function scopeTaskTemplates(all, storeIds) {
-  if (storeIds === null) return all;
-  return all.filter(t => storeIds.includes(t.storeId));
-}
-
-function scopeTaskInstances(all, storeIds) {
-  if (storeIds === null) return all;
-  return all.filter(i => storeIds.includes(i.storeId));
-}
-
-function scopeLeaves(all, u, storeIds) {
-  if (u.role === 'admin') return all;
-  if (u.role === 'area_manager' || u.role === 'store_manager') {
-    return all.filter(l => storeIds.includes(l.storeId) || l.userId === u.id);
-  }
-  return all.filter(l => l.userId === u.id);
-}
-
-function scopeDutyRosters(all, u, storeIds) {
-  if (u.role === 'admin') return all;
-  if (u.role === 'area_manager') {
-    return all.filter(r =>
-      (r.type === 'store' && storeIds.includes(r.storeId)) ||
-      (r.type === 'am')
-    );
-  }
-  if (u.role === 'store_manager') {
-    return all.filter(r =>
-      (r.type === 'store' && storeIds.includes(r.storeId)) ||
-      (r.type === 'am')
-    );
-  }
-  return all.filter(r =>
-    (r.type === 'store' && storeIds.includes(r.storeId))
-  );
-}
-
-// ─── Routes ───────────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.use('/api', authMiddleware);
 
-// Login — returns safe user object (no password)
+// Sanitized users endpoint — strips passwords before sending
+app.get('/api/users', async (req, res) => {
+  try {
+    const record = await DataModel.findOne({ key: 'users' });
+    const users = record ? record.value : [];
+    const safe = users.map(({ password, ...rest }) => rest);
+    return res.json(safe);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+const bcrypt = require('bcryptjs');
+
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -184,56 +124,18 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ─── NEW: Single scoped data fetch endpoint ───────────────────────────────────
-// POST /api/data  { userId }
-// Returns ALL collections pre-filtered for the requesting user's role + scope.
-// Nothing sensitive is sent that the user is not authorized to see.
-app.post('/api/data', async (req, res) => {
+app.get('/api/storage/:key', async (req, res) => {
+  if (req.params.key === 'users') {
+    return res.status(403).json({ error: 'Use /api/users instead' });
+  }
   try {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId required' });
-
-    const [usersRec, storesRec, templatesRec, attendanceRec, instancesRec, leavesRec, rostersRec] =
-      await Promise.all([
-        DataModel.findOne({ key: 'users' }),
-        DataModel.findOne({ key: 'stores' }),
-        DataModel.findOne({ key: 'task_templates' }),
-        DataModel.findOne({ key: 'attendance' }),
-        DataModel.findOne({ key: 'task_instances' }),
-        DataModel.findOne({ key: 'leaves' }),
-        DataModel.findOne({ key: 'duty_rosters' })
-      ]);
-
-    const allUsers   = usersRec     ? usersRec.value     : [];
-    const allStores  = storesRec    ? storesRec.value    : [];
-    const allTpls    = templatesRec ? templatesRec.value : [];
-    const allAtt     = attendanceRec  ? attendanceRec.value  : [];
-    const allInst    = instancesRec   ? instancesRec.value   : [];
-    const allLeaves  = leavesRec      ? leavesRec.value      : [];
-    const allRosters = rostersRec     ? rostersRec.value     : [];
-
-    // Resolve requesting user from DB — client CANNOT lie about role
-    const u = allUsers.find(x => x.id === userId && x.active !== false);
-    if (!u) return res.status(403).json({ error: 'User not found or inactive' });
-
-    const storeIds = authorizedStoreIdsFor(u); // null = admin (all)
-    const resolvedIds = storeIds === null ? allStores.map(s => s.id) : storeIds;
-
-    return res.json({
-      stores:         scopeStores(allStores, storeIds),
-      users:          scopeUsers(allUsers, u, resolvedIds),
-      task_templates: scopeTaskTemplates(allTpls, storeIds),
-      attendance:     scopeAttendance(allAtt, u, resolvedIds),
-      task_instances: scopeTaskInstances(allInst, storeIds),
-      leaves:         scopeLeaves(allLeaves, u, resolvedIds),
-      duty_rosters:   scopeDutyRosters(allRosters, u, resolvedIds)
-    });
+    const record = await DataModel.findOne({ key: req.params.key });
+    return res.json(record ? record.value : null);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Save endpoint — still generic but app-key protected ─────────────────────
 app.post('/api/storage/:key', async (req, res) => {
   if (req.body.value === undefined || req.body.value === null) {
     return res.status(400).json({ error: 'value is required' });
@@ -259,20 +161,6 @@ app.post('/api/storage/:key', async (req, res) => {
   try {
     await DataModel.findOneAndUpdate({ key: req.params.key }, { value }, { upsert: true, new: true });
     return res.json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// Legacy GET — blocked for all sensitive collections
-const BLOCKED_LEGACY_KEYS = ['users', 'attendance', 'task_instances', 'leaves', 'duty_rosters'];
-app.get('/api/storage/:key', async (req, res) => {
-  if (BLOCKED_LEGACY_KEYS.includes(req.params.key)) {
-    return res.status(403).json({ error: `Use POST /api/data instead for ${req.params.key}` });
-  }
-  try {
-    const record = await DataModel.findOne({ key: req.params.key });
-    return res.json(record ? record.value : null);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
