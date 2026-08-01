@@ -791,6 +791,7 @@ async function handleForcePasswordChange(e) {
     u.mustChangePassword = false; // keep in-memory session user in sync
 
     await persistUsers();
+    await saveKey('session', u.id, false);
     STATE.page = 'dashboard';
     showToast('Password updated successfully.');
     render();
