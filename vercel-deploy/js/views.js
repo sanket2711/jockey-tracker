@@ -28,6 +28,12 @@ export function renderLogin() {
         <div class="field"><label>Password</label><input type="password" id="loginPassword" required placeholder="••••••••"></div>
         <button class="btn btn-primary btn-block" type="submit">Sign in</button>
       </form>
+      // <details class="demo-accounts">
+      //   <summary>Demo accounts (tap to autofill)</summary>
+      //   <div class="demo-list">
+      //     ${demo.map(d => `<div class="demo-row" data-email="${esc(d[1])}" data-pass="${esc(d[2])}"><span><b>${esc(d[0])}</b></span><span class="mono">${esc(d[1])}</span></div>`).join('')}
+      //   </div>
+      // </details>
     </div>
   </div>`;
 }
