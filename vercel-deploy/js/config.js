@@ -27,7 +27,7 @@ export const STATE = {
     rosterEditingId: null
 };
 
-export const BACKEND_API_URL = "https://jockey-tracker.onrender.com";
+export const BACKEND_API_URL = "https://jockey-tracker-dev.onrender.com";
 export const SHIFT_START_MIN = 9 * 60 + 30; // keep as global fallback
 export const GRACE_MIN = 15;
 export const RADIUS_M = 70;
