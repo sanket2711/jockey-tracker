@@ -557,7 +557,9 @@ export function renderReportsPage() {
 export function renderTeamPage() {
     const u = STATE.user;
     const allStores = storesForUser(u);
-    const team = teamForUser(u); // includes area managers already
+    const team = u.role === 'admin'
+        ? STATE.users                  // show everyone including other admins
+        : teamForUser(u);
 
     if (!STATE.teamFilterStoreIds) STATE.teamFilterStoreIds = [];
     if (!STATE.teamFilterStaffIds) STATE.teamFilterStaffIds = [];
@@ -572,11 +574,19 @@ export function renderTeamPage() {
     const selStaffIds = STATE.teamFilterStaffIds;
     const displayed = selStaffIds.length ? byStore.filter(x => selStaffIds.includes(x.id)) : byStore;
 
-    const rows = displayed.map(u2 => `
+    const ROLE_ORDER = { admin: 0, area_manager: 1, store_manager: 2, sales_staff: 3 };
+    const sortedDisplay = displayed.slice().sort((a, b) => {
+        const roleDiff = (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99);
+        if (roleDiff !== 0) return roleDiff;
+        return a.name.localeCompare(b.name);
+    });
+
+    const rows = sortedDisplay.map(u2 => `
         <tr>
           <td><b>${esc(u2.name)}</b><div class="badge-role">${esc(u2.email)}</div></td>
           <td>${esc(roleLabel(u2.role))}</td>
-          <td>${u2.role === 'area_manager' ? (u2.storeIds || []).map(storeName).join(', ') || '—' : esc(storeName(u2.storeId))}</td>
+          <td>${u2.role === 'area_manager'? (u2.storeIds || []).map(storeName).join(', ') || '—' : u2.role === 'admin'
+                ? '<span class="text-faint">All Stores</span>' : esc(storeName(u2.storeId))}</td>
           <td>${u2.active === false ? '<span class="pill pill-absent">Inactive</span>' : '<span class="pill pill-present">Active</span>'}</td>
           <td><button class="btn btn-ghost btn-sm btn-block" data-edituser="${u2.id}">Edit</button></td>
         </tr>`).join('');
@@ -713,6 +723,7 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
             <option value="sales_staff">Sales Staff</option>
             <option value="store_manager">Store Manager</option>
             <option value="area_manager">Area Manager</option>
+            <option value="admin">Admin / Owner</option>
           </select>
         </div>
 
@@ -749,7 +760,8 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
 
     const syncRoleFields = () => {
         const isArea = roleSelect.value === 'area_manager';
-        singleStoreField.style.display = isArea ? 'none' : 'block';
+        const isAdmin = roleSelect.value === 'admin';
+        singleStoreField.style.display = (isArea || isAdmin) ? 'none' : 'block';
         multiStoreField.style.display = isArea ? 'block' : 'none';
     };
 
@@ -778,12 +790,13 @@ export function addEmployeeModal(triggerRender, showToast, uidGenerator) {
                 alert('Please select at least one store for the area manager.');
                 return;
             }
-        } else {
+        }  else if (role !== 'admin') {
             storeId = document.getElementById('empStore').value;
         }
 
+        const idPrefix = role === 'admin' ? 'u_admin' : 'u_staff';
         const newEmp = {
-            id: `u_staff_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true, mustChangePassword: true
+            id: `${idPrefix}_${uidGenerator()}`, name, email, password, role, storeId, storeIds, active: true, mustChangePassword: true
         };
 
         STATE.users.push(newEmp);
@@ -937,7 +950,8 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
       </label>
     `).join('');
 
-    const roleOptions = [['sales_staff', 'Sales Staff'], ['store_manager', 'Store Manager'], ['area_manager', 'Area Manager']].map(([value, label]) => `<option value="${value}" ${emp.role === value ? 'selected' : ''}>${label}</option>`).join('');
+    const roleOptions = [['sales_staff', 'Sales Staff'], ['store_manager', 'Store Manager'], ['area_manager', 'Area Manager'], ['admin', 'Admin / Owner']]
+        .map(([value, label]) => `<option value="${value}" ${emp.role === value ? 'selected' : ''}>${label}</option>`).join('');
 
     const content = `
       <div class="modal-head">
@@ -949,7 +963,7 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
         <div class="field"><label>Full Name</label><input type="text" id="editEmpName" value="${esc(emp.name)}" required></div>
         <div class="field"><label>User Name</label><input type="text" id="editEmpEmail" value="${esc(emp.email)}" required disabled></div>
         <div class="field"><label>Role</label><select id="editEmpRole">${roleOptions}</select></div>
-        <div class="field" id="editSingleStoreField" style="${emp.role === 'area_manager' ? 'display:none;' : ''}">
+        <div class="field" id="editSingleStoreField" style="${emp.role === 'area_manager' || emp.role === 'admin' ? 'display:none;' : ''}">
           <label>Assigned Store</label><select id="editEmpStore">${singleStoreOptions}</select>
         </div>
         <div class="field" id="editMultiStoreField" style="${emp.role === 'area_manager' ? '' : 'display:none;'}">
@@ -991,8 +1005,10 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
     const multiStoreField = document.getElementById('editMultiStoreField');
 
     const syncRoleFields = () => {
-        const isArea = roleEl.value === 'area_manager';
-        singleStoreField.style.display = isArea ? 'none' : 'block';
+        const role = roleEl.value;
+        const isArea = role === 'area_manager';
+        const isAdmin = role === 'admin';
+        singleStoreField.style.display = (isArea || isAdmin) ? 'none' : 'block';
         multiStoreField.style.display = isArea ? 'block' : 'none';
     };
 
@@ -1027,6 +1043,9 @@ export function editEmployeeModal(userId, triggerRender, showToast) {
             }
             emp.storeId = null;
             emp.storeIds = storeIds;
+        } else if (role === 'admin') {
+            emp.storeId = null;
+            emp.storeIds = null;
         } else {
             emp.storeId = document.getElementById('editEmpStore').value;
             emp.storeIds = null;
