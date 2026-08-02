@@ -15,7 +15,7 @@ import {
 } from './app.js';
 
 export function renderLogin() {
-    const demo = [['Admin / Owner', 'sanket.baheti', 'admin123'], ['Area Manager', 'dinesh.pardeshi', 'area123'], ['Store Manager', 'sundar.maske', 'manager123'], ['Sales Staff', 'adarsh.palkhe', 'staff123'],];
+    const demo = [['Admin / Owner', 'sanket', 'admin123'], ['Area Manager', 'dinesh.pardeshi', 'area123'], ['Store Manager', 'sundar.maske', 'manager123'], ['Sales Staff', 'adarsh.palkhe', 'staff123'],];
     return `
   <div class="login-wrap">
     <div class="login-card">
