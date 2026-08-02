@@ -126,7 +126,7 @@ export function seedData() {
         },
     ];
     const users = [
-        { id: 'u_admin1', name: 'Sanket Baheti', email: 'sanket.baheti', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
+        { id: 'u_admin1', name: 'Sanket Baheti', email: 'sanket', password: 'admin123', role: 'admin', storeId: null, storeIds: null, active: true },
         { id: 'u_area1', name: 'Dinesh Pardeshi', email: 'dinesh.pardeshi', password: 'area123', role: 'area_manager', storeId: null, storeIds: ['st_a', 'st_b', 'st_c', 'st_d'], active: true },
         { id: 'u_mgr_a', name: 'Sundar Maske', email: 'sundar.maske', password: 'manager123', role: 'store_manager', storeId: 'st_a', storeIds: null, active: true },
         { id: 'u_mgr_b', name: 'Omkar Shinde', email: 'omkar.shinde', password: 'manager123', role: 'store_manager', storeId: 'st_b', storeIds: null, active: true },
