@@ -129,7 +129,7 @@ export function renderPunchWidget() {
       <div class="ticket-row"><span class="lbl">Check-in</span><span class="val">${rec && !isPunchRejected(rec) ? fmtTime(rec.checkInTime) + (rec.manual ? ' <span class="pill pill-pending">Manual</span>' : '') : '—'}</span></div>
       <div class="ticket-row"><span class="lbl">Status</span><span class="val">${statusVal}</span></div>
       <div class="ticket-row"><span class="lbl">Check-out</span><span class="val">${isPunchCountable(rec) && rec.checkOutTime ? fmtTime(rec.checkOutTime) + (outCount > 1 ? ` <span class="text-faint">(×${outCount})</span>` : '') : '—'}</span></div>
-      <div class="ticket-row"><span class="lbl">Geo-fence</span><span class="val">${RADIUS_M}m radius</span></div>
+      <!--div class="ticket-row"><span class="lbl">Geo-fence</span><span class="val">${RADIUS_M}m radius</span></--div-->
       ${rec && rec.manual && rec.manualReason ? `<div class="ticket-row"><span class="lbl">Reason</span><span class="val">${esc(rec.manualReason)}</span></div>` : ''}
     </div>
   </div>`;

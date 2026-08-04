@@ -159,11 +159,14 @@ async function login(email, password) {
     STATE.punchStoreId = null;
     STATE.page = u.mustChangePassword ? 'forcePasswordChange' : 'dashboard';
     await saveKey('session', u.id, false);
+    await loadSharedData();
     return true;
 }
 
 async function logout() {
     STATE.user = null;
+    STATE.stores = [];
+    STATE.attendance = [];
     STATE.reportFilterStoreIds = [];
     STATE.reportFilterStaffIds = [];
     STATE.attendanceFilterStoreIds = [];
@@ -282,10 +285,10 @@ function attachAppEvents() {
 
     // Shift radio buttons: no default is pre-selected, user must explicitly choose one
     document.querySelectorAll('input[name="punchShift"]').forEach(radio => {
-                radio.addEventListener('change', () => {
-                        STATE.punchShift = parseInt(radio.value, 10) === 2 ? 2 : 1;
-                    });
-            });
+        radio.addEventListener('change', () => {
+            STATE.punchShift = parseInt(radio.value, 10) === 2 ? 2 : 1;
+        });
+    });
     document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => { STATE.page = el.dataset.page; STATE.punchStatus = ''; STATE.punchOk = null; render(); }));
     const menuToggleBtn = document.getElementById('menuToggleBtn');
     if (menuToggleBtn) {
@@ -813,11 +816,41 @@ document.addEventListener('click', (e) => {
 
 /* System Bootstrapper Init Engine */
 async function init() {
-    let [stores, users, taskTemplates, attendance, taskInstances, leaves, dutyRosters] = await Promise.all([
-        loadKey('stores', true), loadUsersSafe(), loadKey('task_templates', true),
-        loadKey('attendance', true), loadKey('task_instances', true), loadKey('leaves', true),
-        loadKey('duty_rosters', true)
-    ]);
+    // Step 1: Read localStorage only — zero network requests
+    const sessionId = await loadKey('session', false);
+
+    if (!sessionId) {
+        // No session — show login immediately, fetch NOTHING sensitive
+        STATE.ready = true;
+        render();
+        return;
+    }
+
+    // Step 2: Session exists — now safely load all shared data
+    await loadSharedData();
+
+    // Step 3: Resolve user from loaded list
+    const u = STATE.users.find(x => x.id === sessionId);
+    if (u) {
+        STATE.user = u;
+    } else {
+        // Session ID stale (user deleted) — clear and show login
+        await saveKey('session', null, false);
+    }
+
+    STATE.punchStatus = ''; STATE.punchOk = null;
+    STATE.ready = true;
+    render();
+}
+
+// only called when session is confirmed valid
+async function loadSharedData() {
+    let [stores, users, taskTemplates, attendance, taskInstances, leaves, dutyRosters] =
+        await Promise.all([
+            loadKey('stores', true), loadUsersSafe(), loadKey('task_templates', true),
+            loadKey('attendance', true), loadKey('task_instances', true),
+            loadKey('leaves', true), loadKey('duty_rosters', true)
+        ]);
     if (!stores || !users) {
         const seed = seedData();
         stores = seed.stores; users = seed.users; taskTemplates = seed.taskTemplates;
